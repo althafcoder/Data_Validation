@@ -1,5 +1,5 @@
-outputs/    
-uploads/    
-.env    
-   
-
+outputs/
+uploads/
+.env
+__pycache__/
+*.xlsx
