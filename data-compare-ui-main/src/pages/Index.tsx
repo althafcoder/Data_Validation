@@ -25,26 +25,46 @@ const Index = () => {
     setAppState("processing");
   }, [canStart]);
 
+  const [activeGroup, setActiveGroup] = useState<string | null>(null);
+
   const handleProcessingComplete = useCallback(async () => {
     if (legacyFile && adpFile) {
       try {
-        const [personalRes, jobRes, taxRes, complianceRes] = await Promise.all([
-          submitValidation({ legacyFile, adpFile }, "personal"),
-          submitValidation({ legacyFile, adpFile }, "job"),
-          submitValidation({ legacyFile, adpFile }, "tax"),
-          submitValidation({ legacyFile, adpFile }, "compliance")
-        ]);
+        console.log("Starting Sequential Validation...");
+        
+        setActiveGroup("Personal Data");
+        const personalRes = await submitValidation({ legacyFile, adpFile }, "personal");
+        
+        setActiveGroup("Job Information");
+        const jobRes = await submitValidation({ legacyFile, adpFile }, "job");
+        
+        setActiveGroup("Tax Information");
+        const taxRes = await submitValidation({ legacyFile, adpFile }, "tax");
+        
+        setActiveGroup("Compliance Data");
+        const complianceRes = await submitValidation({ legacyFile, adpFile }, "compliance");
+        
+        setActiveGroup("Direct Deposit Info");
+        const ddRes = await submitValidation({ legacyFile, adpFile }, "direct_deposit");
+        
+        setActiveGroup("Deduction Data");
+        const dedRes = await submitValidation({ legacyFile, adpFile }, "deduction");
+
         setResult({
           ...personalRes,
           jobSessionId: jobRes.sessionId,
           taxSessionId: taxRes.sessionId,
-          complianceSessionId: complianceRes.sessionId
+          complianceSessionId: complianceRes.sessionId,
+          ddSessionId: ddRes.sessionId,
+          dedSessionId: dedRes.sessionId
         });
         setAppState("results");
+        setActiveGroup(null);
       } catch (err: any) {
         console.error(err);
         alert(`Verification failed: ${err.message || "Unknown error"}`);
         setAppState("upload");
+        setActiveGroup(null);
       }
     }
   }, [legacyFile, adpFile]);
@@ -171,8 +191,15 @@ const Index = () => {
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -20 }}
-              className="pt-16"
+              className="pt-16 max-w-md mx-auto"
             >
+              {activeGroup && (
+                <div className="text-center mb-6">
+                  <span className="px-3 py-1 rounded-full bg-accent/20 text-accent text-xs font-medium animate-pulse">
+                    Currently Validating: {activeGroup}
+                  </span>
+                </div>
+              )}
               <ProcessingPipeline onComplete={handleProcessingComplete} />
             </motion.div>
           )}

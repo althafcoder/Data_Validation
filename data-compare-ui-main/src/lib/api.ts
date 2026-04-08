@@ -51,6 +51,8 @@ export interface ValidationResult {
   jobSessionId?: string;
   taxSessionId?: string;
   complianceSessionId?: string;
+  ddSessionId?: string;
+  dedSessionId?: string;
   summary: SummaryData;
   validationSheet: ValidationRow[];
   discrepancies: DiscrepancyRow[];
@@ -68,7 +70,7 @@ export const PIPELINE_STEPS: PipelineStep[] = [
   { id: 7, label: "Generating Report", status: "pending" },
 ];
 
-export async function submitValidation(request: ValidationRequest, fieldGroup: "personal" | "job" | "tax" | "compliance" = "personal"): Promise<ValidationResult> {
+export async function submitValidation(request: ValidationRequest, fieldGroup: "personal" | "job" | "tax" | "compliance" | "direct_deposit" | "deduction" = "personal"): Promise<ValidationResult> {
   const formData = new FormData();
   formData.append("legacyFile", request.legacyFile);
   formData.append("adpFile", request.adpFile);
@@ -94,7 +96,7 @@ export async function submitValidation(request: ValidationRequest, fieldGroup: "
   return response.json();
 }
 
-export function exportValidationResult(sessionId: string, jobSessionId?: string, taxSessionId?: string, complianceSessionId?: string) {
+export function exportValidationResult(sessionId: string, jobSessionId?: string, taxSessionId?: string, complianceSessionId?: string, ddSessionId?: string, dedSessionId?: string) {
   const downloadUrl = (url: string) => {
     const a = document.createElement("a");
     a.href = url;
@@ -104,14 +106,13 @@ export function exportValidationResult(sessionId: string, jobSessionId?: string,
     document.body.removeChild(a);
   };
   
-  if (jobSessionId) {
-    let url = `${API_BASE_URL}/export-zip?personal_id=${sessionId}&job_id=${jobSessionId}`;
-    if (taxSessionId) {
-      url += `&tax_id=${taxSessionId}`;
-    }
-    if (complianceSessionId) {
-      url += `&compliance_id=${complianceSessionId}`;
-    }
+  if (jobSessionId || ddSessionId || dedSessionId) {
+    let url = `${API_BASE_URL}/export-zip?personal_id=${sessionId}`;
+    if (jobSessionId) url += `&job_id=${jobSessionId}`;
+    if (taxSessionId) url += `&tax_id=${taxSessionId}`;
+    if (complianceSessionId) url += `&compliance_id=${complianceSessionId}`;
+    if (ddSessionId) url += `&dd_id=${ddSessionId}`;
+    if (dedSessionId) url += `&ded_id=${dedSessionId}`;
     downloadUrl(url);
   } else {
     downloadUrl(`${API_BASE_URL}/export/${sessionId}`);

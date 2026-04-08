@@ -62,7 +62,14 @@ export function DetailTabs({ result }: DetailTabsProps) {
                 className="pl-9 h-9 w-[200px] bg-card"
               />
             </div>
-            <Button variant="outline" size="sm" className="h-9 gap-1.5" onClick={() => exportValidationResult(result.sessionId, result.jobSessionId, result.taxSessionId, result.complianceSessionId)}>
+            <Button variant="outline" size="sm" className="h-9 gap-1.5" onClick={() => exportValidationResult(
+              result.sessionId, 
+              result.jobSessionId, 
+              result.taxSessionId, 
+              result.complianceSessionId,
+              result.ddSessionId,
+              result.dedSessionId
+            )}>
               <Download className="h-3.5 w-3.5" />
               Export
             </Button>
