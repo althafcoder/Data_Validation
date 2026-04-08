@@ -82,6 +82,7 @@ JOB_FIELDS        = norm.JOB_FIELDS
 TAX_FIELDS        = norm.TAX_FIELDS
 COMPLIANCE_FIELDS = norm.COMPLIANCE_FIELDS
 DEDUCTION_FIELDS  = norm.DEDUCTION_FIELDS
+DIRECT_DEPOSIT_FIELDS = norm.DIRECT_DEPOSIT_FIELDS
 
 # Core fields to always capture for metadata/context
 CORE_FIELDS = ["Employment/Position Status", "Hire Date", "Termination Date", "Status"]
@@ -1179,14 +1180,108 @@ def run_validation(legacy_path, adp_path, company, output_path, required_fields,
         ws4 = wb.create_sheet(sheet4_name)
         build_not_in_report_sheet(ws4, ml, ma, company, required_fields)
 
-    # Sheet 5 (Deduction only): Code Mapping (Wait, let's make it Sheet 4 for Deduction)
-    if is_deduction:
-        ws4 = wb.create_sheet("Code Mapping")
-        build_code_mapping_sheet(ws4, legacy, adp)
+    # Prepare detailed data for the UI
+    validation_sheet_data = []
+    for pk_val in ml.index:
+        leg_row = ml.loc[pk_val]
+        adp_row = ma.loc[pk_val]
+        
+        # Handle duplicates: ensure we are working with a single Series (row)
+        if hasattr(leg_row, "iloc") and len(leg_row.shape) > 1: leg_row = leg_row.iloc[0]
+        if hasattr(adp_row, "iloc") and len(adp_row.shape) > 1: adp_row = adp_row.iloc[0]
+        
+        name = _get_ee_name(leg_row)
+        
+        fields = {}
+        for field in required_fields:
+            vl = fmt_val(leg_row.get(field, ""))
+            va = fmt_val(adp_row.get(field, ""))
+            
+            # Simple Python version of the Excel formula
+            if not vl and not va:
+                status = "BLANK"
+            elif (not vl and va) or (vl and not va):
+                status = "ERROR"
+            elif str(vl).strip() == str(va).strip():
+                status = "MATCH"
+            else:
+                status = "MISMATCH"
+                
+            fields[field] = {
+                "legacy": vl,
+                "adp": va,
+                "status": status
+            }
+        
+        # If pk_val is composite (list/tuple), use first element for display
+        display_id = pk_val[0] if isinstance(pk_val, (list, tuple)) else pk_val
+        
+        validation_sheet_data.append({
+            "id": str(display_id),
+            "employeeName": name,
+            "employeeId": str(display_id),
+            "fields": fields
+        })
+
+    # Build Discrepancy list for UI
+    discrepancy_data = []
+    for item in disc_sample:
+        # Use a flexible ID lookup to avoid KeyError
+        eid = item.get("SSN", item.get("Account Number", item.get("ID", "Unknown")))
+        discrepancy_data.append({
+            "id": f"{eid}_{item.get('Field', 'unknown')}",
+            "employeeName": item.get("Name", "Unknown"),
+            "employeeId": str(eid),
+            "field": item.get("Field", "unknown"),
+            "legacyValue": str(item.get("Legacy", "")),
+            "adpValue": str(item.get("ADP", ""))
+        })
+
+    # Build Missing lists
+    missing_adp_data = []
+    for ssn in only_leg:
+        eid = str(ssn)
+        # Find row in legacy df for name - safer filtering
+        mask = legacy[primary_key].astype(str) == eid
+        rows = legacy[mask]
+        name = _get_ee_name(rows.iloc[0]) if not rows.empty else "Unknown"
+        missing_adp_data.append({
+            "id": eid,
+            "employeeName": name,
+            "employeeId": eid,
+            "source": "legacy"
+        })
+
+    missing_legacy_data = []
+    for ssn in only_adp:
+        eid = str(ssn)
+        # Find row in adp df for name - safer filtering
+        mask = adp[primary_key].astype(str) == eid
+        rows = adp[mask]
+        name = _get_ee_name(rows.iloc[0]) if not rows.empty else "Unknown"
+        missing_legacy_data.append({
+            "id": eid,
+            "employeeName": name,
+            "employeeId": eid,
+            "source": "adp"
+        })
 
     wb.save(output_path)
-
     print(f"\n[OK]  Saved -> {output_path}\n")
+
+    return {
+        "summary": {
+            "totalEmployees": len(ml) + len(only_leg) + len(only_adp),
+            "matched": len(ml),
+            "mismatched": len(disc_sample),
+            "missingInADP": len(only_leg),
+            "missingInLegacy": len(only_adp)
+        },
+        "validationSheet": validation_sheet_data,
+        "discrepancies": discrepancy_data,
+        "missingInADP": missing_adp_data,
+        "missingInLegacy": missing_legacy_data
+    }
 
 
 # ---------------------------------------------------------------------------
