@@ -40,6 +40,12 @@ async def validate_files(
     leg_path = os.path.join(UPLOAD_DIR, f"{req_id}_legacy_{legacyFile.filename}")
     adp_path = os.path.join(UPLOAD_DIR, f"{req_id}_adp_{adpFile.filename}")
 
+    # Save uploaded files
+    with open(leg_path, "wb") as f:
+        f.write(await legacyFile.read())
+    with open(adp_path, "wb") as f:
+        f.write(await adpFile.read())
+
     # File loading and processing logic
     legacy_raw = vo.load_excel(leg_path)
     adp_raw = vo.load_excel(adp_path)
