@@ -77,15 +77,23 @@ async def validate_files(
     sheet_idx = 1 if fg == "direct_deposit" else 0
 
     try:
-        res = vo.run_validation(
-            legacy_path=leg_path,
-            adp_path=adp_path,
-            company="G&W Products",
-            output_path=output_path,
-            required_fields=required_fields,
-            primary_key=primary_key,
-            sheet_idx=sheet_idx
-        )
+        if fg == "deduction":
+            res = vo.run_deduction_validation(
+                legacy_path=leg_path,
+                adp_path=adp_path,
+                company="G&W Products",
+                output_path=output_path
+            )
+        else:
+            res = vo.run_validation(
+                legacy_path=leg_path,
+                adp_path=adp_path,
+                company="G&W Products",
+                output_path=output_path,
+                required_fields=required_fields,
+                primary_key=primary_key,
+                sheet_idx=sheet_idx
+            )
         print(f"[SUCCESS] Validation complete. Output: {output_path}")
     except Exception as e:
         error_trace = traceback.format_exc()

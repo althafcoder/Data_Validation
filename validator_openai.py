@@ -1283,6 +1283,156 @@ def run_validation(legacy_path, adp_path, company, output_path, required_fields,
         "missingInLegacy": missing_legacy_data
     }
 
+def load_deduction_mapping_strict(path: str) -> pd.DataFrame:
+    """Load Sheet 4 (index 3) and find the headers for mapping."""
+    try:
+        xl = pd.ExcelFile(path)
+        # Filter sheet names to find one with 'mapping' or index 3
+        sheet_name = None
+        for s in xl.sheet_names:
+            if "mapping" in s.lower() or "sheet 4" in s.lower():
+                sheet_name = s
+                break
+        if not sheet_name:
+            sheet_name = xl.sheet_names[3] if len(xl.sheet_names) > 3 else xl.sheet_names[0]
+        
+        # Read first 10 rows to find header row containing Code_ID or Deduction Code
+        raw = pd.read_excel(path, sheet_name=sheet_name, header=None, nrows=10)
+        header_row = 1 
+        for i, row in raw.iterrows():
+            vals = [str(v).lower() for v in row.values if pd.notna(v)]
+            if "code_id" in vals or "deduction code" in vals or "common code" in vals:
+                header_row = i
+                break
+                
+        mapping_df = pd.read_excel(path, sheet_name=sheet_name, header=header_row)
+        mapping_df.columns = [str(c).strip() for c in mapping_df.columns]
+        return mapping_df
+    except:
+        return pd.DataFrame()
+
+def run_deduction_validation(legacy_path, adp_path, company, output_path):
+    print(f"\n[Deduction] Processing: {output_path}")
+    
+    # 1. Load Mapping Sheets from BOTH files
+    leg_map_df = load_deduction_mapping_strict(legacy_path)
+    adp_map_df = load_deduction_mapping_strict(adp_path)
+    
+    print(f"Phase 1: Loading Deduction Mapping from Sheet 4 …")
+    
+    def get_id_map(m_df):
+        if m_df.empty: return {}, {}
+        m_cols = m_df.columns
+        id_col = next((c for c in m_cols if "code_id" in c.lower() or "common code" in c.lower()), None)
+        code_col = next((c for c in m_cols if "deduction code" in c.lower()), None)
+        desc_col = next((c for c in m_cols if "description" in c.lower()), None)
+        
+        if not id_col or not code_col: return {}, {}
+        
+        id_map = m_df[[code_col, id_col]].dropna().astype(str).set_index(code_col)[id_col].to_dict()
+        desc_map = m_df[[id_col, desc_col]].dropna().astype(str).set_index(id_col)[desc_col].to_dict() if desc_col else {}
+        return id_map, desc_map
+
+    leg_to_id, leg_id_to_desc = get_id_map(leg_map_df)
+    adp_to_id, adp_id_to_desc = get_id_map(adp_map_df)
+    
+    # Merge mappings if possible (ID to Desc)
+    master_id_to_desc = {**leg_id_to_desc, **adp_id_to_desc}
+
+    # 2. Extract Deduction Data
+    req_fields = norm.DEDUCTION_FIELDS # ['SSN', 'Full Name', 'Deduction Code', 'Deduction Description', 'Deduction Amount', 'Deduction Rate']
+    
+    def get_ded_df(path, label):
+        xl = pd.ExcelFile(path)
+        sheet = next((s for s in xl.sheet_names if "deduction" in s.lower()), xl.sheet_names[0])
+        # IMPORTANT: deduplicate=False to keep all deductions for the same employee
+        df_raw = load_excel(path, sheet_idx=xl.sheet_names.index(sheet), id_col_hint="SSN", deduplicate=False)
+        mapping = ai_map_columns(df_raw, label, req_fields)
+        df = apply_mapping(df_raw.copy(), mapping, req_fields)
+        df = norm.normalize_dataframe(df, req_fields)
+        
+        # Unify name to "Full Name" for matching
+        if "Employee Full Name" in df.columns:
+            df["Full Name"] = df["Employee Full Name"]
+        elif "Legal First Name" in df.columns and "Legal Last Name" in df.columns:
+            df["Full Name"] = df.apply(lambda r: f"{r['Legal Last Name']}, {r['Legal First Name']}".upper().strip(), axis=1)
+        
+        return df
+
+    legacy_ded = get_ded_df(legacy_path, "Legacy Deduction")
+    adp_ded = get_ded_df(adp_path, "ADP Deduction")
+    
+    # 3. Apply Code_ID mapping
+    legacy_ded["Code_ID"] = legacy_ded["Deduction Code"].astype(str).map(leg_to_id).apply(lambda x: str(x).replace(".0", "") if pd.notna(x) else "")
+    adp_ded["Code_ID"] = adp_ded["Deduction Code"].astype(str).map(adp_to_id).apply(lambda x: str(x).replace(".0", "") if pd.notna(x) else "")
+    
+    # Clean up names for matching
+    legacy_ded["MatchName"] = legacy_ded["Full Name"].apply(lambda n: re.sub(r'[^A-Z]', '', str(n).upper()))
+    adp_ded["MatchName"] = adp_ded["Full Name"].apply(lambda n: re.sub(r'[^A-Z]', '', str(n).upper()))
+    
+    print(f"Phase 2: Validating records via Code_ID group (Matching by Name + Code_ID) …")
+    
+    # Join on (MatchName, Code_ID)
+    ml, ma, only_leg, only_adp = build_datasets(legacy_ded, adp_ded, primary_key=["MatchName", "Code_ID"])
+    
+    print(f"      Matched: {len(ml)}  |  Only Legacy: {len(only_leg)}  |  Only ADP: {len(only_adp)}")
+
+    # 4. Generate Report
+    wb = Workbook()
+    ws1 = wb.active
+    ws1.title = "Validated Data"
+    
+    # Fields to display (including SSN as shown in expected screenshot)
+    v_fields = ["SSN", "Full Name", "Code_ID", "Deduction Code", "Deduction Description", "Deduction Amount", "Deduction Rate"]
+    build_validation_sheet(ws1, ml, ma, company, v_fields, flat_header=False)
+    
+    # Discrepancies
+    ws2 = wb.create_sheet("Discrepancies")
+    disc_sample = []
+    for pk in ml.index:
+        l_rows = ml.loc[[pk]] if isinstance(pk, tuple) else ml.loc[pk] # Handle possible duplicates
+        a_rows = ma.loc[[pk]] if isinstance(pk, tuple) else ma.loc[pk]
+        
+        # Simply iterate through the matched blocks
+        l_row = l_rows.iloc[0] if hasattr(l_rows, "iloc") else l_rows
+        a_row = a_rows.iloc[0] if hasattr(a_rows, "iloc") else a_rows
+        
+        for f in ["Deduction Description", "Deduction Amount", "Deduction Rate"]:
+            vl, va = fmt_val(l_row.get(f, "")), fmt_val(a_row.get(f, ""))
+            if compare_values(vl, va) != "MATCH":
+                disc_sample.append({"Employee": l_row["Full Name"], "Field": f, "Legacy": vl, "ADP": va})
+
+    disc_ai = ai_discrepancy_summary(disc_sample)
+    build_discrepancies_sheet(ws2, ml, ma, company, disc_ai, v_fields, id_col=["MatchName", "Code_ID"])
+    
+    # Missing Employee
+    ws3 = wb.create_sheet("Missing Employee")
+    l_names = [legacy_ded[legacy_ded.set_index(["MatchName", "Code_ID"]).index == s].iloc[0]["Full Name"] for s in list(only_leg)[:15]]
+    a_names = [adp_ded[adp_ded.set_index(["MatchName", "Code_ID"]).index == s].iloc[0]["Full Name"] for s in list(only_adp)[:15]]
+    miss_ai = ai_missing_ee_summary(l_names, a_names)
+    build_missing_ee_sheet(ws3, legacy_ded, adp_ded, only_leg, only_adp, miss_ai, id_col=["MatchName", "Code_ID"])
+    
+    # Not in ADP
+    ws4 = wb.create_sheet("Not in ADP")
+    build_not_in_report_sheet(ws4, ml, ma, company, v_fields)
+    
+    # Code Mapping (Combined)
+    ws5 = wb.create_sheet("Code Mapping")
+    m_combined = pd.concat([leg_map_df, adp_map_df]).drop_duplicates().sort_values(by=leg_map_df.columns[0] if not leg_map_df.empty else 0)
+    for ci, col in enumerate(m_combined.columns, 1):
+        _header_cell(ws5, 1, ci, col, bg="DDEBF7", fg="000000")
+        for ri, val in enumerate(m_combined[col], 2):
+            _data_cell(ws5, ri, ci, fmt_val(val))
+
+    wb.save(output_path)
+    print(f"[OK] Saved -> {output_path}")
+
+    return {
+        "summary": {"totalEmployees": len(ml) + len(only_leg) + len(only_adp), "matched": len(ml), "mismatched": len(disc_sample), "missingInADP": len(only_leg), "missingInLegacy": len(only_adp)},
+        "validationSheet": [], "discrepancies": [], "missingInADP": [], "missingInLegacy": []
+    }
+
+
 
 # ---------------------------------------------------------------------------
 # CLI
@@ -1374,12 +1524,11 @@ def main():
     if args.output == "validation_output.xlsx":
          ded_output = f"{args.company} - Deduction Information Validation (Output).xlsx"
 
-    run_validation(
+    run_deduction_validation(
         legacy_path = args.legacy,
         adp_path    = args.adp,
         company     = args.company,
-        output_path = ded_output,
-        required_fields = DEDUCTION_FIELDS
+        output_path = ded_output
     )
 
 
