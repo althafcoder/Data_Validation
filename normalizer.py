@@ -186,16 +186,28 @@ def normalize_ssn(v: str) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Rule 8 – Zip Code Normalization (Dash to Space)
+# Rule 8 – Zip Code Normalization (xxxxx-xxxx)
 # ---------------------------------------------------------------------------
 
 def normalize_zip(v: str) -> str:
-    """Standardize 9-digit zip codes to use a space instead of a dash."""
+    """Normalize zip codes to xxxxx-xxxx (5-4 format)."""
     raw = _safe(v)
     if not raw:
         return ""
-    # Replace dash with space
-    return raw.replace("-", " ")
+    
+    # Extract only digits
+    digits = re.sub(r"\D", "", raw)
+    
+    # If 9 digits, format as xxxxx-xxxx
+    if len(digits) == 9:
+        return f"{digits[:5]}-{digits[5:]}"
+    
+    # If 5 digits, return as-is
+    if len(digits) == 5:
+        return digits
+        
+    # Otherwise return as-is (e.g. non-US or partial)
+    return raw.strip()
 
 
 def normalize_account(v: str) -> str:
@@ -312,6 +324,7 @@ BIRTH_DATE_FIELDS  = {"birth date", "date of birth", "dob", "birthdate"}
 MARITAL_FIELDS     = {"state filing status", "marital status", "w4 marital status", "federal marital status", "filing status"}
 EMAIL_FIELDS       = {"personal email", "work email", "email address"}
 PHONE_FIELDS       = {"cell/mobile phone", "home phone", "work phone", "phone number"}
+ZIP_FIELDS         = {"legal / preferred address: zip / postal code", "zip", "zip code", "postal code", "zip/postal", "zip_code", "postal_code"}
 ADDRESS_FIELDS     = {
     "legal / preferred address: address line 1",
     "legal / preferred address: address line 2",
@@ -692,6 +705,12 @@ def normalize_dataframe(df: pd.DataFrame, target_fields: list = None) -> pd.Data
         if key in col_lower:
             col = col_lower[key]
             df[col] = df[col].apply(lambda v: normalize_ssn(_safe(v)))
+
+    # ── Rule 8: Zip Code ─────────────────────────────────────────────────────
+    for key in ZIP_FIELDS:
+        if key in col_lower:
+            col = col_lower[key]
+            df[col] = df[col].apply(lambda v: normalize_zip(_safe(v)))
 
     # ── Rule 1: Name Unification (all 3 variants → Legal First/Middle/Last) ──
     df = _normalize_name_columns(df)
