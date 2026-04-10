@@ -314,48 +314,52 @@ FIRST_NAME_FIELDS  = {"first name", "emp first name", "employee first name"}
 MIDDLE_NAME_FIELDS = {"middle name", "emp middle name", "employee middle name", "middle initial"}
 LAST_NAME_FIELDS   = {"last name", "emp last name", "employee last name", "surname"}
 # Legal split-name aliases (ADP Variant 2)
-LEGAL_FIRST_FIELDS = {"legal first name", "legal first", "first name", "first_name", "first", "fname", "given name", "emp first name", "employee first name"}
-LEGAL_MID_FIELDS   = {"legal middle name", "legal middle", "legal middle initial", "mname"}
-LEGAL_LAST_FIELDS  = {"legal last name", "legal last", "last name", "last_name", "last", "lname", "surname", "emp last name", "employee last name"}
+LEGAL_FIRST_FIELDS = {"legal first name", "legal first", "first name", "first_name", "first", "fname", "given name", "emp first name", "employee first name", "first_name", "legal_firstname"}
+LEGAL_MID_FIELDS   = {"legal middle name", "legal middle", "legal middle initial", "mname", "middle_name", "legal_middle_name"}
+LEGAL_LAST_FIELDS  = {"legal last name", "legal last", "last name", "last_name", "last", "lname", "surname", "emp last name", "employee last name", "last_name", "legal_lastname"}
 
-SSN_FIELDS         = {"ssn", "tax id", "social security number", "tax ssn", "ss_number", "tax ssn#", "ss#", "tax(ssn)", "tax id (ssn)", "ee ssn", "employee ssn", "emp ssn"}
+SSN_FIELDS         = {"ssn", "tax id", "social security number", "tax ssn", "ss_number", "tax ssn#", "ss#", "tax(ssn)", "tax id (ssn)", "ee ssn", "employee ssn", "emp ssn", "ss_number"}
 GENDER_FIELDS      = {"gender", "sex", "gender (self-id)", "gender for insurance coverage"}
-BIRTH_DATE_FIELDS  = {"birth date", "date of birth", "dob", "birthdate"}
+BIRTH_DATE_FIELDS  = {"birth date", "date of birth", "dob", "birthdate", "birth_date", "birth_date_(mm/dd/yyyy)"}
 MARITAL_FIELDS     = {"state filing status", "marital status", "w4 marital status", "federal marital status", "filing status"}
-EMAIL_FIELDS       = {"personal email", "work email", "email address"}
-PHONE_FIELDS       = {"cell/mobile phone", "home phone", "work phone", "phone number"}
-ZIP_FIELDS         = {"legal / preferred address: zip / postal code", "zip", "zip code", "postal code", "zip/postal", "zip_code", "postal_code"}
+EMAIL_FIELDS       = {"personal email", "work email", "email address", "personal_email", "work_email"}
+PHONE_FIELDS       = {"cell/mobile phone", "home phone", "work phone", "phone number", "primary_phone/secondary_phone?"}
+ZIP_FIELDS         = {"legal / preferred address: zip / postal code", "zip", "zip code", "postal code", "zip/postal", "zip_code", "postal_code", "primary_zip/postal_code"}
 ADDRESS_FIELDS     = {
     "legal / preferred address: address line 1",
     "legal / preferred address: address line 2",
     "legal / preferred address: city",
     "legal / preferred address: state / territory code",
-    "legal / preferred address: zip / postal code"
+    "legal / preferred address: zip / postal code",
+    "primary_address_line_1",
+    "primary_address_line_2",
+    "primary_city/municipality",
+    "primary_state/province"
 }
-STATUS_FIELDS      = {"employment/position status", "status", "employment status"}
+STATUS_FIELDS      = {"employment/position status", "status", "employment status", "employee_status"}
 TOBACCO_FIELDS     = {"tobacco user", "tobacco"}
-HIRE_DATE_FIELDS   = {"hire date", "hire_date", "date of hire", "hire_dt"}
-TERM_DATE_FIELDS   = {"termination date", "term date", "term_date", "date of termination", "term_dt", "termination_dt"}
-REHIRE_DATE_FIELDS = {"rehire date", "rehire_date", "date of rehire", "rehire_dt"}
+HIRE_DATE_FIELDS   = {"hire date", "hire_date", "date of hire", "hire_dt", "hire_date_(mm/dd/yyyy)"}
+TERM_DATE_FIELDS   = {"termination date", "term date", "term_date", "date of termination", "term_dt", "termination_dt", "status_effective_date"}
+REHIRE_DATE_FIELDS = {"rehire date", "rehire_date", "date of rehire", "rehire_dt", "position_start_date"}
 
 # Job Information Fields
-JOB_TITLE_FIELDS   = {"job title", "position", "title", "job title description", "job title", "job_title"}
-DEPT_CODE_FIELDS   = {"home department code", "dept code", "department code", "department code + name"}
-DEPT_DESC_FIELDS   = {"home department description", "dept description", "department description", "department", "department name", "department code + name"}
+JOB_TITLE_FIELDS   = {"job title", "position", "title", "job title description", "job_title", "position_desc"}
+DEPT_CODE_FIELDS   = {"home department code", "dept code", "department code", "department code + name", "department"}
+DEPT_DESC_FIELDS   = {"home department description", "dept description", "department description", "department", "department name", "department code + name", "department_desc"}
 COST_CODE_FIELDS   = {"home cost number code", "cost center code", "cost number code"}
 COST_DESC_FIELDS   = {"home cost number description", "cost center description", "cost number description"}
 BU_CODE_FIELDS     = {"business unit code", "bu code"}
 BU_DESC_FIELDS     = {"business unit description", "bu description", "business unit"}
-LOC_CODE_FIELDS    = {"location code", "loc code"}
-LOC_DESC_FIELDS    = {"location description", "loc description", "location"}
+LOC_CODE_FIELDS    = {"location code", "loc code", "work_location"}
+LOC_DESC_FIELDS    = {"location description", "loc description", "location", "work_location"}
 WORKER_CAT_FIELDS  = {"worker category", "employment category", "employee category", "worker category description", "status type"}
 REPORTS_TO_FIELDS  = {"reports to", "manager", "reports to (manager)", "reports to legal name"}
 FLSA_FIELDS        = {"flsa (exempt/non exempt)", "flsa status", "flsa", "flsa description"}
-STANDARD_HOURS_FIELDS = {"standard hours", "std hours"}
-ANNUAL_SALARY_FIELDS  = {"annual salary", "rate #1 annualized"}
-PAY_RATE_FIELDS    = {"regular pay rate amount", "pay rate", "rate", "hourly rate or salary amt"}
+STANDARD_HOURS_FIELDS = {"standard hours", "std hours", "scheduled_pay_period_hours"}
+ANNUAL_SALARY_FIELDS  = {"annual salary", "rate #1 annualized", "annual_salary"}
+PAY_RATE_FIELDS    = {"regular pay rate amount", "pay rate", "rate", "hourly rate or salary amt", "hourly_rate", "regular_salary_amount"}
 RATE_FIELDS        = {"rate 2", "rate 3", "rate 4", "rate 5", "rate 6", "rate 7", "rate 8", "rate 9"}
-NAICS_FIELDS       = {"naics workers' comp code", "naics code", "workers comp code", "workers comp: (text)", "workers comp class code (text)"}
+NAICS_FIELDS       = {"naics workers' comp code", "naics code", "workers comp code", "workers comp: (text)", "workers comp class code (text)", "workers_comp_code"}
 BENEFIT_ELIG_FIELDS = {"benefit eligibility class", "benefit class", "benefit eligibiltiy class"}
 
 
@@ -575,22 +579,22 @@ DEDUCTION_FIELDS = [
 
 # ── Tax field alias sets ───────────────────────────────────────────────────
 # Boolean "Do not calculate" fields
-FUTA_FIELDS           = {"do not calculate f.u.t.a. taxable?", "futa taxable", "exempt from futa", "do not calc futa", "do not calculate f.u.t.a. taxable"}
-FED_INC_TAX_FIELDS    = {"do not calculate federal income tax?", "exempt from federal income tax", "do not calc federal income tax", "do not calculate federal income tax"}
-FED_TAX_FIELDS        = {"do not calculate federal taxable?", "exempt from federal taxable", "do not calc fed taxable", "do not calculate federal taxable"}
-MEDICARE_FIELDS       = {"do not calculate medicare?", "exempt from medicare", "do not calc medicare", "do not calculate medicare"}
-SOC_SEC_FIELDS        = {"do not calculate social security?", "exempt from social security", "do not calc social security", "do not calculate social security"}
-STATE_TAX_FIELDS      = {"do not calculate state tax?", "exempt from state tax", "do not calc state tax", "do not calculate state tax"}
+FUTA_FIELDS           = {"do not calculate f.u.t.a. taxable?", "futa taxable", "exempt from futa", "do not calc futa", "do not calculate f.u.t.a. taxable", "block_futa?"}
+FED_INC_TAX_FIELDS    = {"do not calculate federal income tax?", "exempt from federal income tax", "do not calc federal income tax", "do not calculate federal income tax", "block_fit?"}
+FED_TAX_FIELDS        = {"do not calculate federal taxable?", "exempt from federal taxable", "do not calc fed taxable", "do not calculate federal taxable", "block_federal_tax?"}
+MEDICARE_FIELDS       = {"do not calculate medicare?", "exempt from medicare", "do not calc medicare", "do not calculate medicare", "block_medicare?"}
+SOC_SEC_FIELDS        = {"do not calculate social security?", "exempt from social security", "do not calc social security", "do not calculate social security", "block_ss?"}
+STATE_TAX_FIELDS      = {"do not calculate state tax?", "exempt from state tax", "do not calc state tax", "do not calculate state tax", "block_state_tax?"}
 STATE_TAXABLE_FIELDS  = {"do not calculate state taxable?", "exempt from state taxable", "do not calc state taxable", "do not calculate state taxable"}
 
 # Federal / W4
-FED_MARITAL_FIELDS    = {"federal/w4 marital status description", "federal marital status", "w4 marital status", "fed marital status", "federal filing status", "filing status"}
-FED_EXEMPT_FIELDS     = {"federal/w4 exemptions", "federal exemptions", "w4 exemptions", "fed exemptions", "federal exemptions (w4s saved after 2019 are based on filing status)", "number of exemptions (w4s saved after 2019 are based on filing status)"}
-FED_ADD_TAX_FIELDS    = {"federal additional tax amount", "additional federal tax", "extra federal tax", "fed additional tax", "federal additional amount", "additional amount withheld"}
-DEDUCTIONS_FIELDS     = {"deductions", "additional deductions"}
-DEPENDENTS_FIELDS     = {"dependents", "number of dependents", "dependents amount", "dependents amount and other dependents amount"}
-OTHER_INCOME_FIELDS   = {"other income", "additional income"}
-MULTIPLE_JOBS_FIELDS  = {"multiple jobs", "multiple jobs indicator", "two jobs", "has two incomes"}
+FED_MARITAL_FIELDS    = {"federal/w4 marital status description", "federal marital status", "w4 marital status", "fed marital status", "federal filing status", "filing status", "fed_filing_status"}
+FED_EXEMPT_FIELDS     = {"federal/w4 exemptions", "federal exemptions", "w4 exemptions", "fed exemptions", "federal exemptions (w4s saved after 2019 are based on filing status)", "number of exemptions (w4s saved after 2019 are based on filing status)", "fed_exemptions"}
+FED_ADD_TAX_FIELDS    = {"federal additional tax amount", "additional federal tax", "extra federal tax", "fed additional tax", "federal additional amount", "additional amount withheld", "fed_addl_$"}
+DEDUCTIONS_FIELDS     = {"deductions", "additional deductions", "fed_deductions_$"}
+DEPENDENTS_FIELDS     = {"dependents", "number of dependents", "dependents amount", "dependents amount and other dependents amount", "fed_dependents_$"}
+OTHER_INCOME_FIELDS   = {"other income", "additional income", "fed_other_income_$"}
+MULTIPLE_JOBS_FIELDS  = {"multiple jobs", "multiple jobs indicator", "two jobs", "has two incomes", "fed_multiple_jobs?", "multiple jobs indicator"}
 
 # Local tax
 LIVED_LOCAL_FIELDS    = {"lived in local jurisdiction code", "local lived jurisdiction", "local residence code"}
@@ -598,13 +602,13 @@ WORKED_LOCAL_FIELDS   = {"worked in local jurisdiction code", "local worked juri
 LOCAL4_TAX_FIELDS     = {"local 4 tax code", "local tax code 4", "local4 tax code"}
 
 # State tax
-LIVED_STATE_FIELDS    = {"lived in state code", "state lived code", "state of residence", "resident state", "lived in/worked in indicator"}
-WORKED_STATE_FIELDS   = {"worked in state code", "state worked code", "state of employment", "work state", "lived in/worked in indicator"}
-SUI_SDI_FIELDS        = {"sui/sdi tax code", "sui sdi tax code", "sdi tax code", "sui tax code"}
-STATE_MARITAL_FIELDS  = {"state marital status code", "state marital status", "state filing status code", "state filing status", "filing status"}
-STATE_EXEMPT_FIELDS   = {"state exemptions/allowances", "state exemptions", "state allowances", "number of exemptions (w4s saved after 2019 are based on filing status)"}
-STATE_ADD_TAX_FIELDS  = {"state additional tax amount", "additional state tax", "extra state tax", "state additional amount", "additional amount withheld"}
-STATE_ADD_PCT_FIELDS  = {"state additional tax amount percentage", "state additional tax %", "state add tax pct", "state add tax percent", "state additional percent", "additional percent withheld"}
+LIVED_STATE_FIELDS    = {"lived in state code", "state lived code", "state of residence", "resident state", "lived in/worked in indicator", "lives-in_state"}
+WORKED_STATE_FIELDS   = {"worked in state code", "state worked code", "state of employment", "work state", "lived in/worked in indicator", "works-in_state"}
+SUI_SDI_FIELDS        = {"sui/sdi tax code", "sui sdi tax code", "sdi tax code", "sui tax code", "sui_state"}
+STATE_MARITAL_FIELDS  = {"state marital status code", "state marital status", "state filing status code", "state filing status", "filing status", "state_filing_status"}
+STATE_EXEMPT_FIELDS   = {"state exemptions/allowances", "state exemptions", "state allowances", "number of exemptions (w4s saved after 2019 are based on filing status)", "#state_exemptions/allowances"}
+STATE_ADD_TAX_FIELDS  = {"state additional tax amount", "additional state tax", "extra state tax", "state additional amount", "additional amount withheld", "state_addl_$"}
+STATE_ADD_PCT_FIELDS  = {"state additional tax amount percentage", "state additional tax %", "state add tax pct", "state add tax percent", "state additional percent", "additional percent withheld", "state_addl_%"}
 
 # Compliance Information aliases
 ETHNICITY_FIELDS      = {"ethnicity", "ethnic group", "hispanic/latino", "hispanic or latino"}
@@ -614,14 +618,14 @@ WORK_AUTH_FIELDS      = {"us work authorization status", "work authorization", "
 I9_DATE_FIELDS        = {"i-9 eligibility review date", "i9 review date", "i-9 date", "i-9 eligibility review"}
 
 # Direct Deposit aliases
-DD_ACCOUNT_FIELDS     = {"direct deposit account number", "account number", "account #", "bank account number", "bank account #", "account"}
-DD_ROUTING_FIELDS     = {"direct deposit routing number", "routing number", "routing #", "bank routing number", "bank routing #", "routing", "aba number", "aba #"}
+DD_ACCOUNT_FIELDS     = {"direct deposit account number", "account number", "account #", "bank account number", "bank account #", "account", "net_acct_code", "dist_1_acct_code", "dist_2_acct_code", "dist_3_acct_code", "dist_4_acct_code", "dist_1_account", "dist_2_account"}
+DD_ROUTING_FIELDS     = {"direct deposit routing number", "routing number", "routing #", "bank routing number", "bank routing #", "routing", "aba number", "aba #", "net_rout_code", "dist_1_rout_code", "dist_2_rout_code", "dist_3_rout_code", "dist_4_rout_code", "dist_1_routing", "dist_2_routing"}
 DD_AMOUNT_FIELDS      = {"direct deposit amount", "amount", "deposit amount", "net pay amount"}
 DD_AMT_TYPE_FIELDS    = {"direct deposit amount type", "amount type", "deposit type"}
 DD_FREQ_FIELDS        = {"direct deposit frequency", "frequency", "deposit frequency"}
 
 # Deduction Information aliases
-DED_CODE_FIELDS       = {"deduction code", "ded code", "deduction cd", "ded cd", "deduction type code", "deduction id", "code", "deduction code [all deductions]", "deduction code [all]"}
+DED_CODE_FIELDS       = {"deduction code", "ded code", "deduction cd", "ded cd", "deduction type code", "deduction id", "code", "deduction code [all deductions]", "deduction code [all]", "deduction code"}
 DED_DESC_FIELDS       = {"deduction description", "ded description", "deduction name", "ded name", "deduction type description", "deduction type", "deduction desc", "deduction plan", "plan name", "deduction long name"}
 DED_AMT_FIELDS        = {"deduction amount", "ded amount", "amount", "deduction $"}
 DED_PCT_FIELDS        = {"deduction %", "deduction percent", "deduction rate", "ded rate", "rate", "percent"}
