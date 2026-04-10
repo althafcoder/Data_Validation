@@ -582,8 +582,9 @@ def build_datasets(legacy: pd.DataFrame, adp: pd.DataFrame, primary_key: str = "
         only_leg = leg_ssns - adp_ssns
         only_adp = adp_ssns - leg_ssns
 
-        ml = legacy[legacy[id_col].isin(matched)].set_index(id_col, drop=False).reindex(sorted(matched))
-        ma = adp[adp[id_col].isin(matched)].set_index(id_col, drop=False).reindex(sorted(matched))
+        # Use loc instead of reindex to handle duplicate keys (like multiple deductions)
+        ml = legacy[legacy[id_col].isin(matched)].set_index(id_col, drop=False).loc[sorted(matched)]
+        ma = adp[adp[id_col].isin(matched)].set_index(id_col, drop=False).loc[sorted(matched)]
         
     return ml, ma, only_leg, only_adp
 
@@ -1366,14 +1367,39 @@ def run_deduction_validation(legacy_path, adp_path, company, output_path):
     legacy_ded["Code_ID"] = legacy_ded["Deduction Code"].astype(str).map(leg_to_id).apply(lambda x: str(x).replace(".0", "") if pd.notna(x) else "")
     adp_ded["Code_ID"] = adp_ded["Deduction Code"].astype(str).map(adp_to_id).apply(lambda x: str(x).replace(".0", "") if pd.notna(x) else "")
     
-    # Clean up names for matching
-    legacy_ded["MatchName"] = legacy_ded["Full Name"].apply(lambda n: re.sub(r'[^A-Z]', '', str(n).upper()))
-    adp_ded["MatchName"] = adp_ded["Full Name"].apply(lambda n: re.sub(r'[^A-Z]', '', str(n).upper()))
+    # Clean up names for matching (Extremely Robust: Ignore middle names, initials, suffixes, and nicknames)
+    def make_robust_key(row):
+        fname = str(row.get("Full Name", "")).strip()
+        first, middle, last = norm.normalize_full_name(fname)
+        
+        # 1. Standardize and remove suffixes from last name
+        last = last.upper()
+        for suffix in [" JR", " SR", " II", " III", " IV", " V"]:
+            if last.endswith(suffix):
+                last = last.replace(suffix, "").strip()
+        
+        # 2. Use only first 3 letters of first name to handle nicknames (Ken/Kenneth)
+        first_short = first.upper()[:3]
+        
+        # 3. Final clean: remove all non-alpha
+        clean_f = re.sub(r'[^A-Z]', '', first_short)
+        clean_l = re.sub(r'[^A-Z]', '', last)
+        
+        cid = str(row.get("Code_ID", "")).strip()
+        return f"{clean_l}_{clean_f}_{cid}"
+
+    legacy_ded["MatchName"] = legacy_ded.apply(make_robust_key, axis=1)
+    adp_ded["MatchName"] = adp_ded.apply(make_robust_key, axis=1)
     
-    print(f"Phase 2: Validating records via Code_ID group (Matching by Name + Code_ID) …")
+    # --- New Robust Alignment Logic ---
+    # To handle multiple deductions per Code_ID and ensure 100% accuracy:
+    # 1. We create an 'InstanceID' to distinguish multiple deductions of the same Code_ID for one person
+    legacy_ded["InstanceID"] = legacy_ded.groupby(["MatchName", "Code_ID"]).cumcount()
+    adp_ded["InstanceID"] = adp_ded.groupby(["MatchName", "Code_ID"]).cumcount()
     
-    # Join on (MatchName, Code_ID)
-    ml, ma, only_leg, only_adp = build_datasets(legacy_ded, adp_ded, primary_key=["MatchName", "Code_ID"])
+    # 2. Use (MatchName, Code_ID, InstanceID) as the primary key for matching
+    pk = ["MatchName", "Code_ID", "InstanceID"]
+    ml, ma, only_leg, only_adp = build_datasets(legacy_ded, adp_ded, primary_key=pk)
     
     print(f"      Matched: {len(ml)}  |  Only Legacy: {len(only_leg)}  |  Only ADP: {len(only_adp)}")
 
@@ -1381,36 +1407,29 @@ def run_deduction_validation(legacy_path, adp_path, company, output_path):
     wb = Workbook()
     ws1 = wb.active
     ws1.title = "Validated Data"
-    
-    # Fields to display (including SSN as shown in expected screenshot)
     v_fields = ["SSN", "Full Name", "Code_ID", "Deduction Code", "Deduction Description", "Deduction Amount", "Deduction Rate"]
     build_validation_sheet(ws1, ml, ma, company, v_fields, flat_header=False)
     
     # Discrepancies
     ws2 = wb.create_sheet("Discrepancies")
     disc_sample = []
-    for pk in ml.index:
-        l_rows = ml.loc[[pk]] if isinstance(pk, tuple) else ml.loc[pk] # Handle possible duplicates
-        a_rows = ma.loc[[pk]] if isinstance(pk, tuple) else ma.loc[pk]
-        
-        # Simply iterate through the matched blocks
-        l_row = l_rows.iloc[0] if hasattr(l_rows, "iloc") else l_rows
-        a_row = a_rows.iloc[0] if hasattr(a_rows, "iloc") else a_rows
-        
+    # Now that we aligned by InstanceID, ml and ma have the same length and 1-to-1 rows!
+    for i in range(len(ml)):
+        l_row, a_row = ml.iloc[i], ma.iloc[i]
         for f in ["Deduction Description", "Deduction Amount", "Deduction Rate"]:
             vl, va = fmt_val(l_row.get(f, "")), fmt_val(a_row.get(f, ""))
             if compare_values(vl, va) != "MATCH":
                 disc_sample.append({"Employee": l_row["Full Name"], "Field": f, "Legacy": vl, "ADP": va})
 
     disc_ai = ai_discrepancy_summary(disc_sample)
-    build_discrepancies_sheet(ws2, ml, ma, company, disc_ai, v_fields, id_col=["MatchName", "Code_ID"])
+    build_discrepancies_sheet(ws2, ml, ma, company, disc_ai, v_fields, id_col=pk)
     
     # Missing Employee
     ws3 = wb.create_sheet("Missing Employee")
-    l_names = [legacy_ded[legacy_ded.set_index(["MatchName", "Code_ID"]).index == s].iloc[0]["Full Name"] for s in list(only_leg)[:15]]
-    a_names = [adp_ded[adp_ded.set_index(["MatchName", "Code_ID"]).index == s].iloc[0]["Full Name"] for s in list(only_adp)[:15]]
+    l_names = [legacy_ded[legacy_ded.set_index(pk).index == s].iloc[0]["Full Name"] for s in list(only_leg)[:15]]
+    a_names = [adp_ded[adp_ded.set_index(pk).index == s].iloc[0]["Full Name"] for s in list(only_adp)[:15]]
     miss_ai = ai_missing_ee_summary(l_names, a_names)
-    build_missing_ee_sheet(ws3, legacy_ded, adp_ded, only_leg, only_adp, miss_ai, id_col=["MatchName", "Code_ID"])
+    build_missing_ee_sheet(ws3, legacy_ded, adp_ded, only_leg, only_adp, miss_ai, id_col=pk)
     
     # Not in ADP
     ws4 = wb.create_sheet("Not in ADP")
