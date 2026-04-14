@@ -753,7 +753,7 @@ def build_not_in_report_sheet(ws, ml, ma, company, required_fields):
     _set_col_widths(ws, [3, 25, 16, 18, 25, 25, 25, 25, 25, 40, 15])
 
 
-def build_discrepancies_sheet(ws, ml, ma, company, ai_summary: str, required_fields, id_col: str = "SSN"):
+def build_discrepancies_sheet(ws, ml, ma, company, ai_summary: str, required_fields, id_col: str = "SSN", only_leg=None, only_adp=None, legacy_full=None, adp_full=None):
     # G&W headers: Client Name, SSN, EE Name, Status, Error in the Field, Legacy, ADP
     is_dd = "Account Number" in required_fields
     if is_dd:
@@ -820,6 +820,79 @@ def build_discrepancies_sheet(ws, ml, ma, company, ai_summary: str, required_fie
                         "ADP":    va if va else "",
                         "Result": res,
                     })
+
+    # Add unmatched records if provided (e.g., missing Deduction Codes)
+    if only_leg and legacy_full is not None:
+        id_hdr = id_col[0] if isinstance(id_col, list) else id_col
+        field_to_use = "Deduction Code" if "Deduction Code" in disc_fields else (disc_fields[0] if disc_fields else "Record")
+        if field_to_use not in records_by_field: records_by_field[field_to_use] = []
+        
+        # Pre-index for performance and to avoid KeyError
+        legacy_indexed = legacy_full.set_index(id_col, drop=False)
+        
+        for s in only_leg:
+            try:
+                row = legacy_indexed.loc[[s]] # Use list to always get a DataFrame/Series reliably
+                if isinstance(row, pd.DataFrame): row = row.iloc[0]
+                pk_display = s[0] if isinstance(s, (list, tuple)) else s
+                
+                desc_parts = [f"{row.get('Code_ID', '')} ({row.get('Deduction Code', '')})"]
+                amt = fmt_val(row.get("Deduction Amount", ""))
+                rate = fmt_val(row.get("Deduction Rate", ""))
+                if amt: desc_parts.append(f"Amt: {amt}")
+                if rate: desc_parts.append(f"Rate: {rate}")
+                desc_str = " | ".join(desc_parts)
+
+                records_by_field[field_to_use].append({
+                    "Company Name": company,
+                    "Client Name": company,
+                    id_hdr: pk_display,
+                    "SSN": pk_display,
+                    "EE Name": _get_ee_name(row),
+                    "Status": fmt_val(row.get("Employment/Position Status", row.get("Status", "Active"))),
+                    "Error in the field": field_to_use,
+                    "Error in the Field": field_to_use,
+                    "Legacy": desc_str if "Code_ID" in row.index else row.get(field_to_use, "Record present"),
+                    "ADP": "MISSING IN ADP",
+                    "Result": "MISMATCH"
+                })
+            except: continue
+
+    if only_adp and adp_full is not None:
+        id_hdr = id_col[0] if isinstance(id_col, list) else id_col
+        field_to_use = "Deduction Code" if "Deduction Code" in disc_fields else (disc_fields[0] if disc_fields else "Record")
+        if field_to_use not in records_by_field: records_by_field[field_to_use] = []
+
+        # Pre-index
+        adp_indexed = adp_full.set_index(id_col, drop=False)
+
+        for s in only_adp:
+            try:
+                row = adp_indexed.loc[[s]]
+                if isinstance(row, pd.DataFrame): row = row.iloc[0]
+                pk_display = s[0] if isinstance(s, (list, tuple)) else s
+
+                desc_parts = [f"{row.get('Code_ID', '')} ({row.get('Deduction Code', '')})"]
+                amt = fmt_val(row.get("Deduction Amount", ""))
+                rate = fmt_val(row.get("Deduction Rate", ""))
+                if amt: desc_parts.append(f"Amt: {amt}")
+                if rate: desc_parts.append(f"Rate: {rate}")
+                desc_str = " | ".join(desc_parts)
+
+                records_by_field[field_to_use].append({
+                    "Company Name": company,
+                    "Client Name": company,
+                    id_hdr: pk_display,
+                    "SSN": pk_display,
+                    "EE Name": _get_ee_name(row),
+                    "Status": fmt_val(row.get("Employment/Position Status", row.get("Status", "Active"))),
+                    "Error in the field": field_to_use,
+                    "Error in the Field": field_to_use,
+                    "Legacy": "MISSING IN LEGACY",
+                    "ADP": desc_str if "Code_ID" in row.index else row.get(field_to_use, "Record present"),
+                    "Result": "MISMATCH"
+                })
+            except: continue
 
     for field in disc_fields:
         rows = records_by_field[field]
@@ -1367,6 +1440,11 @@ def run_deduction_validation(legacy_path, adp_path, company, output_path):
     legacy_ded["Code_ID"] = legacy_ded["Deduction Code"].astype(str).map(leg_to_id).apply(lambda x: str(x).replace(".0", "") if pd.notna(x) else "")
     adp_ded["Code_ID"] = adp_ded["Deduction Code"].astype(str).map(adp_to_id).apply(lambda x: str(x).replace(".0", "") if pd.notna(x) else "")
     
+    # 3.5. Filter out deductions that do not belong to a valid Code_ID 
+    # (As per user request: only deductions present in the mapping sheet should be validated)
+    legacy_ded = legacy_ded[legacy_ded["Code_ID"] != ""]
+    adp_ded = adp_ded[adp_ded["Code_ID"] != ""]
+    
     # Clean up names for matching (Extremely Robust: Ignore middle names, initials, suffixes, and nicknames)
     def make_robust_key(row):
         fname = str(row.get("Full Name", "")).strip()
@@ -1413,21 +1491,82 @@ def run_deduction_validation(legacy_path, adp_path, company, output_path):
     # Discrepancies
     ws2 = wb.create_sheet("Discrepancies")
     disc_sample = []
-    # Now that we aligned by InstanceID, ml and ma have the same length and 1-to-1 rows!
+    # 1. Check for field mismatches in matched records
     for i in range(len(ml)):
         l_row, a_row = ml.iloc[i], ma.iloc[i]
         for f in ["Deduction Description", "Deduction Amount", "Deduction Rate"]:
             vl, va = fmt_val(l_row.get(f, "")), fmt_val(a_row.get(f, ""))
             if compare_values(vl, va) != "MATCH":
-                disc_sample.append({"Employee": l_row["Full Name"], "Field": f, "Legacy": vl, "ADP": va})
+                disc_sample.append({
+                    "Employee": l_row["Full Name"], 
+                    "Field": f, 
+                    "Legacy": vl, 
+                    "ADP": va,
+                    "SSN": l_row.get("SSN", ""),
+                    "Status": l_row.get("Employment/Position Status", l_row.get("Status", "Active"))
+                })
+
+    # 2. Add Missing Deduction Codes in ADP (Only in Legacy)
+    if only_leg:
+        # Pre-index for performance and to keep columns accessible
+        legacy_indexed = legacy_ded.set_index(pk, drop=False)
+        for s in only_leg:
+            # s is a tuple (MatchName, Code_ID, InstanceID)
+            row = legacy_indexed.loc[[s]]
+            if isinstance(row, pd.DataFrame): row = row.iloc[0]
+            
+            amt = fmt_val(row.get("Deduction Amount", ""))
+            rate = fmt_val(row.get("Deduction Rate", ""))
+            desc = f"{row['Code_ID']} ({row.get('Deduction Code', '')})"
+            if amt: desc += f" | Amt: {amt}"
+            if rate: desc += f" | Rate: {rate}"
+            
+            disc_sample.append({
+                "Employee": row["Full Name"],
+                "Field": "Deduction Code",
+                "Legacy": desc,
+                "ADP": "MISSING IN ADP",
+                "SSN": row.get("SSN", ""),
+                "Status": row.get("Employment/Position Status", row.get("Status", "Active"))
+            })
+
+    # 3. Add Missing Deduction Codes in Legacy (Only in ADP)
+    if only_adp:
+        # Pre-index
+        adp_indexed = adp_ded.set_index(pk, drop=False)
+        for s in only_adp:
+            row = adp_indexed.loc[[s]]
+            if isinstance(row, pd.DataFrame): row = row.iloc[0]
+            
+            amt = fmt_val(row.get("Deduction Amount", ""))
+            rate = fmt_val(row.get("Deduction Rate", ""))
+            desc = f"{row['Code_ID']} ({row.get('Deduction Code', '')})"
+            if amt: desc += f" | Amt: {amt}"
+            if rate: desc += f" | Rate: {rate}"
+            
+            disc_sample.append({
+                "Employee": row["Full Name"],
+                "Field": "Deduction Code",
+                "Legacy": "MISSING IN LEGACY",
+                "ADP": desc,
+                "SSN": row.get("SSN", ""),
+                "Status": row.get("Employment/Position Status", row.get("Status", "Active"))
+            })
 
     disc_ai = ai_discrepancy_summary(disc_sample)
-    build_discrepancies_sheet(ws2, ml, ma, company, disc_ai, v_fields, id_col=pk)
+    build_discrepancies_sheet(ws2, ml, ma, company, disc_ai, v_fields, id_col=pk, 
+                              only_leg=only_leg, only_adp=only_adp, 
+                              legacy_full=legacy_ded, adp_full=adp_ded)
     
     # Missing Employee
     ws3 = wb.create_sheet("Missing Employee")
-    l_names = [legacy_ded[legacy_ded.set_index(pk).index == s].iloc[0]["Full Name"] for s in list(only_leg)[:15]]
-    a_names = [adp_ded[adp_ded.set_index(pk).index == s].iloc[0]["Full Name"] for s in list(only_adp)[:15]]
+    
+    # Use pre-indexed dfs if available for performance
+    leg_idx_for_names = legacy_indexed if only_leg else legacy_ded.set_index(pk)
+    adp_idx_for_names = adp_indexed if only_adp else adp_ded.set_index(pk)
+    
+    l_names = [leg_idx_for_names.loc[[s]].iloc[0]["Full Name"] for s in list(only_leg)[:15]]
+    a_names = [adp_idx_for_names.loc[[s]].iloc[0]["Full Name"] for s in list(only_adp)[:15]]
     miss_ai = ai_missing_ee_summary(l_names, a_names)
     build_missing_ee_sheet(ws3, legacy_ded, adp_ded, only_leg, only_adp, miss_ai, id_col=pk)
     
