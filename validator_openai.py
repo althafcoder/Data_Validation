@@ -220,7 +220,9 @@ def load_excel(path: str, sheet_idx: int = 0, id_col_hint: str = "SSN", deduplic
 
     ACCOUNT_ALIASES = {
         "direct deposit account number", "account number", "account #", 
-        "bank account number", "bank account #", "account", "account identifier"
+        "bank account number", "bank account #", "account", "account identifier",
+        "net_acct_code", "dist_1_acct_code", "dist_2_acct_code", "dist_3_acct_code", "dist_4_acct_code",
+        "dist_1_account", "dist_2_account", "bank deposit account number"
     }
 
     # Metadata common fields to verify it's a real header (need at least 1-2)
@@ -228,7 +230,9 @@ def load_excel(path: str, sheet_idx: int = 0, id_col_hint: str = "SSN", deduplic
         "name", "first name", "last name", "hire date", "birth date", 
         "gender", "sex", "job title", "department", "status",
         "deduction", "ded code", "deduction code", "ded description",
-        "routing number", "account number", "net pay", "earnings"
+        "routing number", "account number", "net pay", "earnings",
+        "routing", "aba number", "aba #", "net_rout_code", "dist_1_rout_code", 
+        "transit aba number"
     }
 
     with pd.ExcelFile(path) as xl:
@@ -445,11 +449,29 @@ def compare_values(v1, v2, field: str = ""):
     if b1 and b2:
         return "MATCH"
     if b1 != b2:
+        # Special case: for Rate fields, consider 0 and blank as same
+        if field.lower().startswith("rate"):
+            v1_clean = str(v1).strip() if not b1 else ""
+            v2_clean = str(v2).strip() if not b2 else ""
+            if (v1_clean in ["0", "0.0", "0.00", ""] and v2_clean in ["0", "0.0", "0.00", ""]):
+                return "MATCH"
         return "BLANK"
         
     s1, s2 = str(v1).strip(), str(v2).strip()
     if s1.lower() == s2.lower():
         return "MATCH"
+    
+    # Fuzzy state logic (handles OH vs OH-30 vs Ohio)
+    is_state_field = any(k in field.lower() for k in ["state", "sui/sdi", "lived in", "worked in"])
+    if is_state_field:
+        if norm.normalize_state(s1) == norm.normalize_state(s2) and norm.normalize_state(s1) != "":
+            return "MATCH"
+
+    # Fuzzy status logic (handles Inactive vs Terminated)
+    is_status_field = any(k in field.lower() for k in ["status", "position status"])
+    if is_status_field:
+        if norm.normalize_status(s1) == norm.normalize_status(s2) and norm.normalize_status(s1) != "":
+            return "MATCH"
     
     # Fuzzy name logic (handles Joel N. vs Joel Nicholas)
     is_name_field = field.lower().replace("_", " ") in ["ee name", "employee name", "name", "full name"]
@@ -619,23 +641,20 @@ def build_validation_sheet(ws, ml, ma, company, required_fields, flat_header=Fal
             bg_l, fg_l, bg_a, fg_a = GREEN_DARK, WHITE, NAVY, WHITE
         elif "Deduction Code" in required_fields:
             section_label = "DEDUCTION"
-            # Use Blue for ADP (Right section in code, but ADP is usually Blue/Navy) 
-            # and Peach for Legacy (Left section in code, but Legacy is usually Green)
-            # Match Screenshot 2: ADP = Blue, Legacy = Peach
-            bg_l, fg_l = "F8CBAD", "000000" # Legacy
-            bg_a, fg_a = "DDEBF7", "000000" # ADP
+            # Updated to match standard theme (Green for Legacy, Navy for ADP)
+            bg_l, fg_l, bg_a, fg_a = GREEN_DARK, WHITE, NAVY, WHITE
         else:
             section_label = "JOB"
             bg_l, fg_l, bg_a, fg_a = GREEN_DARK, WHITE, NAVY, WHITE
 
         ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=n)
-        c = ws.cell(row=1, column=1, value=f"{section_label} INFO – LEGACY – {company}")
+        c = ws.cell(row=1, column=1, value=f"{section_label} INFO – LEGACY")
         c.fill = hex_fill(bg_l); c.font = cell_font(bold=True, color=fg_l, size=11)
         c.alignment = Alignment(horizontal="center", vertical="center")
         ws.cell(row=1, column=sp1).fill = hex_fill("D9D9D9")
 
         ws.merge_cells(start_row=1, start_column=adp_s, end_row=1, end_column=adp_s + n - 1)
-        c = ws.cell(row=1, column=adp_s, value=f"{section_label} INFO – ADP – {company}")
+        c = ws.cell(row=1, column=adp_s, value=f"{section_label} INFO – ADP")
         c.fill = hex_fill(bg_a); c.font = cell_font(bold=True, color=fg_a, size=11)
         c.alignment = Alignment(horizontal="center", vertical="center")
         ws.cell(row=1, column=sp2).fill = hex_fill("D9D9D9")
@@ -674,11 +693,37 @@ def build_validation_sheet(ws, ml, ma, company, required_fields, flat_header=Fal
             # --- DYNAMIC FORMULA ---
             l_ref = f"{get_column_letter(1 + i)}{r}"
             a_ref = f"{get_column_letter(adp_s + i)}{r}"
-            formula = (
-                f'=IF((AND(ISBLANK({l_ref}),ISBLANK({a_ref}))),"BLANK",'
-                f'(IF((NOT((ISBLANK({l_ref})=ISBLANK({a_ref})))),"ERROR",'
-                f'IF({l_ref}={a_ref},"MATCH","MISMATCH"))))'
-            )
+            
+            if field.lower().startswith("rate"):
+                # For Rate fields, treat blank and 0 as equivalent
+                formula = (
+                    f'=IF(IF(ISBLANK({l_ref}),0,VALUE({l_ref}))=IF(ISBLANK({a_ref}),0,VALUE({a_ref})),"MATCH",'
+                    f'IF((AND(ISBLANK({l_ref}),ISBLANK({a_ref}))),"BLANK",'
+                    f'IF((NOT((ISBLANK({l_ref})=ISBLANK({a_ref})))),"ERROR","MISMATCH")))'
+                )
+            elif any(k in field.lower() for k in ["state", "sui/sdi", "lived in", "worked in"]):
+                # For State fields, compare first 2 characters
+                formula = (
+                    f'=IF(AND(NOT(ISBLANK({l_ref})),NOT(ISBLANK({a_ref})),LEFT(UPPER({l_ref}),2)=LEFT(UPPER({a_ref}),2)),"MATCH",'
+                    f'IF((AND(ISBLANK({l_ref}),ISBLANK({a_ref}))),"BLANK",'
+                    f'IF((NOT((ISBLANK({l_ref})=ISBLANK({a_ref})))),"ERROR","MISMATCH")))'
+                )
+            elif any(k in field.lower() for k in ["status", "position status"]):
+                # For Status fields, treat Inactive and Terminated as same
+                # We normalize both to 'Terminated' using IF for comparison
+                l_norm = f'IF(OR(UPPER({l_ref})="INACTIVE",UPPER({l_ref})="TERMINATED"),"TERM",UPPER({l_ref}))'
+                a_norm = f'IF(OR(UPPER({a_ref})="INACTIVE",UPPER({a_ref})="TERMINATED"),"TERM",UPPER({a_ref}))'
+                formula = (
+                    f'=IF({l_norm}={a_norm},"MATCH",'
+                    f'IF((AND(ISBLANK({l_ref}),ISBLANK({a_ref}))),"BLANK",'
+                    f'IF((NOT((ISBLANK({l_ref})=ISBLANK({a_ref})))),"ERROR","MISMATCH")))'
+                )
+            else:
+                formula = (
+                    f'=IF((AND(ISBLANK({l_ref}),ISBLANK({a_ref}))),"BLANK",'
+                    f'(IF((NOT((ISBLANK({l_ref})=ISBLANK({a_ref})))),"ERROR",'
+                    f'IF({l_ref}={a_ref},"MATCH","MISMATCH"))))'
+                )
             c = ws.cell(row=r, column=cmp_s + i, value=formula)
             c.border = thin_border()
             c.alignment = Alignment(horizontal="center", vertical="center")
@@ -756,18 +801,28 @@ def build_not_in_report_sheet(ws, ml, ma, company, required_fields):
 def build_discrepancies_sheet(ws, ml, ma, company, ai_summary: str, required_fields, id_col: str = "SSN", only_leg=None, only_adp=None, legacy_full=None, adp_full=None):
     # G&W headers: Client Name, SSN, EE Name, Status, Error in the Field, Legacy, ADP
     is_dd = "Account Number" in required_fields
+    is_deduction = "Deduction Code" in required_fields
+
     if is_dd:
-        headers = ["Client Name", "SSN", "EE Name", "Status",
+        headers = ["SSN", "EE Name", "Status",
                    "Error in the Field", "Legacy", "ADP"]
+        max_col = 7
+    elif is_deduction:
+        id_hdr = id_col[0] if isinstance(id_col, list) else id_col
+        headers = [id_hdr, "EE Name", "SSN", "Status", 
+                   "Code_ID", "Deduction Code", "Deduction Amount", "Deduction Rate",
+                   "Error in the field", "Legacy", "ADP"]
+        max_col = 12
     else:
         # If id_col is a list (composite), use the first element (SSN) as the header
         id_hdr = id_col[0] if isinstance(id_col, list) else id_col
-        headers = ["Company Name", id_hdr, "EE Name", "Status",
+        headers = [id_hdr, "EE Name", "Status",
                    "Error in the field", "Legacy", "ADP"]
+        max_col = 7
 
     # AI Summary banner (row 2)
     ws.row_dimensions[2].height = 60
-    ws.merge_cells(start_row=2, start_column=2, end_row=2, end_column=8)
+    ws.merge_cells(start_row=2, start_column=2, end_row=2, end_column=max_col)
     c = ws.cell(row=2, column=2, value=f"🤖 AI Summary: {ai_summary}")
     c.fill = hex_fill(AI_FILL)
     c.font = cell_font(bold=False, color="1F4E79", size=10)
@@ -797,7 +852,6 @@ def build_discrepancies_sheet(ws, ml, ma, company, ai_summary: str, required_fie
             if res != "MATCH":
                 if is_dd:
                     records_by_field[field].append({
-                        "Client Name": company,
                         "SSN": fmt_val(leg.get("EE SSN", pk_val)), 
                         "Status": status,
                         "EE Name": name,
@@ -806,12 +860,28 @@ def build_discrepancies_sheet(ws, ml, ma, company, ai_summary: str, required_fie
                         "ADP":    va if va else "",
                         "Result": res,
                     })
+                elif is_deduction:
+                    id_hdr = id_col[0] if isinstance(id_col, list) else id_col
+                    pk_display = pk_val[0] if isinstance(pk_val, (list, tuple)) else pk_val
+                    records_by_field[field].append({
+                        id_hdr: pk_display,
+                        "EE Name": name,
+                        "SSN": fmt_val(leg.get("SSN", "")),
+                        "Status": status,
+                        "Code_ID": fmt_val(leg.get("Code_ID", "")),
+                        "Deduction Code": fmt_val(leg.get("Deduction Code", "")),
+                        "Deduction Amount": fmt_val(leg.get("Deduction Amount", "")),
+                        "Deduction Rate": fmt_val(leg.get("Deduction Rate", "")),
+                        "Error in the field": field,
+                        "Legacy": vl,
+                        "ADP": va,
+                        "Result": res,
+                    })
                 else:
                     id_hdr = id_col[0] if isinstance(id_col, list) else id_col
                     # Use the first element of pk_val (SSN) for the ID column
                     pk_display = pk_val[0] if isinstance(pk_val, (list, tuple)) else pk_val
                     records_by_field[field].append({
-                        "Company Name": company,
                         id_hdr: pk_display,
                         "EE Name": name,
                         "Status": status,
@@ -836,26 +906,34 @@ def build_discrepancies_sheet(ws, ml, ma, company, ai_summary: str, required_fie
                 if isinstance(row, pd.DataFrame): row = row.iloc[0]
                 pk_display = s[0] if isinstance(s, (list, tuple)) else s
                 
-                desc_parts = [f"{row.get('Code_ID', '')} ({row.get('Deduction Code', '')})"]
                 amt = fmt_val(row.get("Deduction Amount", ""))
                 rate = fmt_val(row.get("Deduction Rate", ""))
-                if amt: desc_parts.append(f"Amt: {amt}")
-                if rate: desc_parts.append(f"Rate: {rate}")
-                desc_str = " | ".join(desc_parts)
-
-                records_by_field[field_to_use].append({
-                    "Company Name": company,
-                    "Client Name": company,
+                
+                rec = {
                     id_hdr: pk_display,
-                    "SSN": pk_display,
+                    "SSN": fmt_val(row.get("SSN", "")),
                     "EE Name": _get_ee_name(row),
                     "Status": fmt_val(row.get("Employment/Position Status", row.get("Status", "Active"))),
                     "Error in the field": field_to_use,
                     "Error in the Field": field_to_use,
-                    "Legacy": desc_str if "Code_ID" in row.index else row.get(field_to_use, "Record present"),
+                    "Legacy": "PRESENT IN LEGACY",
                     "ADP": "MISSING IN ADP",
                     "Result": "MISMATCH"
-                })
+                }
+                
+                if is_deduction:
+                    rec["Code_ID"] = fmt_val(row.get("Code_ID", ""))
+                    rec["Deduction Code"] = fmt_val(row.get("Deduction Code", ""))
+                    rec["Deduction Amount"] = amt
+                    rec["Deduction Rate"] = rate
+                else:
+                    # Fallback merged string for non-deduction unmatched records
+                    desc_parts = [f"{row.get('Code_ID', '')} ({row.get('Deduction Code', '')})"]
+                    if amt: desc_parts.append(f"Amt: {amt}")
+                    if rate: desc_parts.append(f"Rate: {rate}")
+                    rec["Legacy"] = " | ".join(desc_parts) if "Code_ID" in row.index else row.get(field_to_use, "Record present")
+
+                records_by_field[field_to_use].append(rec)
             except: continue
 
     if only_adp and adp_full is not None:
@@ -872,33 +950,41 @@ def build_discrepancies_sheet(ws, ml, ma, company, ai_summary: str, required_fie
                 if isinstance(row, pd.DataFrame): row = row.iloc[0]
                 pk_display = s[0] if isinstance(s, (list, tuple)) else s
 
-                desc_parts = [f"{row.get('Code_ID', '')} ({row.get('Deduction Code', '')})"]
                 amt = fmt_val(row.get("Deduction Amount", ""))
                 rate = fmt_val(row.get("Deduction Rate", ""))
-                if amt: desc_parts.append(f"Amt: {amt}")
-                if rate: desc_parts.append(f"Rate: {rate}")
-                desc_str = " | ".join(desc_parts)
 
-                records_by_field[field_to_use].append({
-                    "Company Name": company,
-                    "Client Name": company,
+                rec = {
                     id_hdr: pk_display,
-                    "SSN": pk_display,
+                    "SSN": fmt_val(row.get("SSN", "")),
                     "EE Name": _get_ee_name(row),
                     "Status": fmt_val(row.get("Employment/Position Status", row.get("Status", "Active"))),
                     "Error in the field": field_to_use,
                     "Error in the Field": field_to_use,
                     "Legacy": "MISSING IN LEGACY",
-                    "ADP": desc_str if "Code_ID" in row.index else row.get(field_to_use, "Record present"),
+                    "ADP": "PRESENT IN ADP",
                     "Result": "MISMATCH"
-                })
+                }
+
+                if is_deduction:
+                    rec["Code_ID"] = fmt_val(row.get("Code_ID", ""))
+                    rec["Deduction Code"] = fmt_val(row.get("Deduction Code", ""))
+                    rec["Deduction Amount"] = amt
+                    rec["Deduction Rate"] = rate
+                else:
+                    # Fallback merged string
+                    desc_parts = [f"{row.get('Code_ID', '')} ({row.get('Deduction Code', '')})"]
+                    if amt: desc_parts.append(f"Amt: {amt}")
+                    if rate: desc_parts.append(f"Rate: {rate}")
+                    rec["ADP"] = " | ".join(desc_parts) if "Code_ID" in row.index else row.get(field_to_use, "Record present")
+
+                records_by_field[field_to_use].append(rec)
             except: continue
 
     for field in disc_fields:
         rows = records_by_field[field]
         
         # Section Label Row (Merged)
-        ws.merge_cells(start_row=current_row, start_column=2, end_row=current_row, end_column=8)
+        ws.merge_cells(start_row=current_row, start_column=2, end_row=current_row, end_column=max_col)
         if not rows:
             c = ws.cell(row=current_row, column=2, value=f"✓ No discrepancies for: {field}")
             c.fill = hex_fill("E2EFDA"); c.font = cell_font(color="375623")
@@ -925,19 +1011,25 @@ def build_discrepancies_sheet(ws, ml, ma, company, ai_summary: str, required_fie
         current_row += 1
 
     ws.freeze_panes = "B5"
-    _set_col_widths(ws, [3, 18, 16, 22, 12, 30, 30, 30])
+    if is_deduction:
+        _set_col_widths(ws, [3, 18, 25, 25, 16, 12, 10, 20, 12, 12, 25, 25, 25])
+    else:
+        _set_col_widths(ws, [3, 18, 16, 22, 12, 30, 30, 30])
 
 
 def build_missing_ee_sheet(ws, legacy, adp, only_leg, only_adp, ai_summary: str, id_col: str = "SSN"):
-    is_dd = "Direct Deposit" in id_col or "Account" in id_col
+    # Detect if this is a Direct Deposit report
+    is_dd = "Account" in str(id_col) or "Routing" in str(id_col)
+    
     if is_dd:
-        labels = ["EE SSN", "EE Name", "Status", "Hire Date", "Term Date"]
+        labels = ["EE SSN", "Routing Number", "Account Number", "EE Name", "Status", "Hire Date", "Term Date"]
     else:
         # If id_col is list (composite), use the first one (SSN) as the header
         id_hdr = id_col[0] if isinstance(id_col, list) else id_col
         labels = [id_hdr, "Name", "Status", "Hire Date", "Term Date"]
+    
     n = len(labels)
-    sp = n + 2
+    sp = n + 2  # Spacer is 2 columns after the start (col 2), so n + 2
     r_s = sp + 1
 
     # AI Summary
@@ -963,9 +1055,16 @@ def build_missing_ee_sheet(ws, legacy, adp, only_leg, only_adp, ai_summary: str,
         h_date = row.get("Hire Date", "")
         t_date = row.get("Termination Date", "")
         
-        # If id_col is list (composite), use the first one (SSN) for display
-        display_id = row.get(id_col[0] if isinstance(id_col, list) else id_col, "")
-        vals = [display_id, _get_ee_name(row), status, h_date, t_date]
+        # Extract values based on whether it's Direct Deposit (7 cols) or standard (5 cols)
+        if is_dd:
+            display_ssn = row.get("SSN", row.get("EE SSN", ""))
+            display_routing = row.get("Routing Number", "")
+            display_account = row.get("Account Number", "")
+            vals = [display_ssn, display_routing, display_account, _get_ee_name(row), status, h_date, t_date]
+        else:
+            display_id = row.get(id_col[0] if isinstance(id_col, list) else id_col, "")
+            vals = [display_id, _get_ee_name(row), status, h_date, t_date]
+            
         for i, v in enumerate(vals):
             _data_cell(ws, r + 5, 2 + i, fmt_val(v), bg=YELLOW_LIGHT if r%2 else "FFFACD")
 
@@ -987,9 +1086,15 @@ def build_missing_ee_sheet(ws, legacy, adp, only_leg, only_adp, ai_summary: str,
         h_date = row.get("Hire Date", "")
         t_date = row.get("Termination Date", "")
 
-        # If id_col is list (composite), use the first one (SSN) for display
-        display_id = row.get(id_col[0] if isinstance(id_col, list) else id_col, "")
-        vals = [display_id, _get_ee_name(row), status, h_date, t_date]
+        if is_dd:
+            display_ssn = row.get("SSN", row.get("EE SSN", ""))
+            display_routing = row.get("Routing Number", "")
+            display_account = row.get("Account Number", "")
+            vals = [display_ssn, display_routing, display_account, _get_ee_name(row), status, h_date, t_date]
+        else:
+            display_id = row.get(id_col[0] if isinstance(id_col, list) else id_col, "")
+            vals = [display_id, _get_ee_name(row), status, h_date, t_date]
+            
         for i, v in enumerate(vals):
             _data_cell(ws, r + 5, r_s + i, fmt_val(v), bg=GREEN_LIGHT if r%2 else "C6EFCE")
 
@@ -1003,7 +1108,7 @@ def _get_ee_name(df_row):
     fn = fmt_val(df_row.get("Legal First Name", ""))
     ln = fmt_val(df_row.get("Legal Last Name", ""))
     if fn and ln: return f"{ln}, {fn}"
-    full = fmt_val(df_row.get("EE Name", df_row.get("Employee Full Name", "")))
+    full = fmt_val(df_row.get("EE Name", df_row.get("Employee Full Name", df_row.get("Full Name", ""))))
     if full: return full
     return fn or ln or fmt_val(df_row.get("SSN", df_row.get("Tax ID (SSN)", "")))
 
@@ -1395,26 +1500,38 @@ def run_deduction_validation(legacy_path, adp_path, company, output_path):
     print(f"Phase 1: Loading Deduction Mapping from Sheet 4 …")
     
     def get_id_map(m_df):
-        if m_df.empty: return {}, {}
+        if m_df.empty: return {}, {}, {}
         m_cols = m_df.columns
         id_col = next((c for c in m_cols if "code_id" in c.lower() or "common code" in c.lower()), None)
         code_col = next((c for c in m_cols if "deduction code" in c.lower()), None)
         desc_col = next((c for c in m_cols if "description" in c.lower()), None)
         
-        if not id_col or not code_col: return {}, {}
+        if not id_col: return {}, {}, {}
         
-        id_map = m_df[[code_col, id_col]].dropna().astype(str).set_index(code_col)[id_col].to_dict()
-        desc_map = m_df[[id_col, desc_col]].dropna().astype(str).set_index(id_col)[desc_col].to_dict() if desc_col else {}
-        return id_map, desc_map
+        c_to_id = {}
+        if code_col:
+            c_to_id = m_df[[code_col, id_col]].dropna().astype(str).set_index(code_col)[id_col].to_dict()
+            c_to_id = {str(k).strip(): str(v).replace(".0", "").strip() for k, v in c_to_id.items()}
 
-    leg_to_id, leg_id_to_desc = get_id_map(leg_map_df)
-    adp_to_id, adp_id_to_desc = get_id_map(adp_map_df)
+        d_to_id = {}
+        id_to_desc = {}
+        if desc_col:
+            d_to_id = m_df[[desc_col, id_col]].dropna().astype(str).set_index(desc_col)[id_col].to_dict()
+            d_to_id = {str(k).strip().upper(): str(v).replace(".0", "").strip() for k, v in d_to_id.items()}
+            
+            id_to_desc = m_df[[id_col, desc_col]].dropna().astype(str).set_index(id_col)[desc_col].to_dict()
+            id_to_desc = {str(k).replace(".0", "").strip(): str(v).strip() for k, v in id_to_desc.items()}
+            
+        return c_to_id, d_to_id, id_to_desc
+
+    leg_to_id, leg_desc_to_id, leg_id_to_desc = get_id_map(leg_map_df)
+    adp_to_id, adp_desc_to_id, adp_id_to_desc = get_id_map(adp_map_df)
     
-    # Merge mappings if possible (ID to Desc)
+    # Merge mappings if possible
     master_id_to_desc = {**leg_id_to_desc, **adp_id_to_desc}
 
     # 2. Extract Deduction Data
-    req_fields = norm.DEDUCTION_FIELDS # ['SSN', 'Full Name', 'Deduction Code', 'Deduction Description', 'Deduction Amount', 'Deduction Rate']
+    req_fields = norm.DEDUCTION_FIELDS 
     
     def get_ded_df(path, label):
         xl = pd.ExcelFile(path)
@@ -1436,12 +1553,35 @@ def run_deduction_validation(legacy_path, adp_path, company, output_path):
     legacy_ded = get_ded_df(legacy_path, "Legacy Deduction")
     adp_ded = get_ded_df(adp_path, "ADP Deduction")
     
-    # 3. Apply Code_ID mapping
-    legacy_ded["Code_ID"] = legacy_ded["Deduction Code"].astype(str).map(leg_to_id).apply(lambda x: str(x).replace(".0", "") if pd.notna(x) else "")
-    adp_ded["Code_ID"] = adp_ded["Deduction Code"].astype(str).map(adp_to_id).apply(lambda x: str(x).replace(".0", "") if pd.notna(x) else "")
+    # 3. Apply Code_ID mapping with fallbacks
+    def unify_code_id(df, c_map, d_map):
+        if "Code_ID" not in df.columns: df["Code_ID"] = ""
+        
+        def pick_id(row):
+            # 1. Start with existing Code_ID if present (and valid)
+            cid = str(row.get("Code_ID", "")).strip().replace(".0", "")
+            if cid and cid not in ("nan", "None", ""):
+                return cid
+            
+            # 2. Try mapping from Deduction Code
+            code = str(row.get("Deduction Code", "")).strip()
+            if code in c_map:
+                return c_map[code]
+            
+            # 3. Try mapping from Deduction Description (Case-insensitive)
+            desc = str(row.get("Deduction Description", "")).strip().upper()
+            if desc in d_map:
+                return d_map[desc]
+            
+            return ""
+
+        df["Code_ID"] = df.apply(pick_id, axis=1)
+        return df
+
+    legacy_ded = unify_code_id(legacy_ded, leg_to_id, leg_desc_to_id)
+    adp_ded = unify_code_id(adp_ded, adp_to_id, adp_desc_to_id)
     
     # 3.5. Filter out deductions that do not belong to a valid Code_ID 
-    # (As per user request: only deductions present in the mapping sheet should be validated)
     legacy_ded = legacy_ded[legacy_ded["Code_ID"] != ""]
     adp_ded = adp_ded[adp_ded["Code_ID"] != ""]
     

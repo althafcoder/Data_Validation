@@ -155,12 +155,37 @@ def normalize_job_title(v: str) -> str:
 # ---------------------------------------------------------------------------
 
 MARITAL_MAP = {
-    "s": "SINGLE", "single": "SINGLE",
-    "m": "MARRIED", "married": "MARRIED",
+    "s": "SINGLE", 
+    "single": "SINGLE",
+    "single or married filing separately": "SINGLE",
+    "m": "MARRIED", 
+    "married": "MARRIED",
+    "married filing jointly or married filing jointly": "MARRIED",
+    "h": "HEAD OF HOUSEHOLD",
+    "head of household": "HEAD OF HOUSEHOLD",
 }
 
 def normalize_marital(v: str) -> str:
-    return MARITAL_MAP.get(_safe(v).lower(), _safe(v).upper())
+    """Standardize marital and filing status records."""
+    raw = _safe(v).lower()
+    if not raw:
+        return ""
+    
+    # Check for direct matches in the map
+    if raw in MARITAL_MAP:
+        return MARITAL_MAP[raw]
+    
+    # Fuzzy match for common phrases
+    if "single" in raw:
+        return "SINGLE"
+    if "jointly" in raw or ("married" in raw and "joint" in raw):
+        return "MARRIED"
+    if "widow" in raw or "surviving" in raw:
+        return "MARRIED"
+    if "head" in raw:
+        return "HEAD OF HOUSEHOLD"
+        
+    return _safe(v).upper()
 
 
 # ---------------------------------------------------------------------------
@@ -208,6 +233,82 @@ def normalize_zip(v: str) -> str:
         
     # Otherwise return as-is (e.g. non-US or partial)
     return raw.strip()
+
+
+# ---------------------------------------------------------------------------
+# Rule 19 – State Normalization (Full Name → 2-Letter Code)
+# ---------------------------------------------------------------------------
+
+STATE_MAP = {
+    "alabama": "AL", "alaska": "AK", "arizona": "AZ", "arkansas": "AR",
+    "american samoa": "AS", "california": "CA", "colorado": "CO",
+    "connecticut": "CT", "delaware": "DE", "district of columbia": "DC",
+    "florida": "FL", "georgia": "GA", "guam": "GU", "hawaii": "HI",
+    "idaho": "ID", "illinois": "IL", "indiana": "IN", "iowa": "IA",
+    "kansas": "KS", "kentucky": "KY", "louisiana": "LA", "maine": "ME",
+    "maryland": "MD", "massachusetts": "MA", "michigan": "MI",
+    "minnesota": "MN", "mississippi": "MS", "missouri": "MO",
+    "montana": "MT", "nebraska": "NE", "nevada": "NV",
+    "new hampshire": "NH", "new jersey": "NJ", "new mexico": "NM",
+    "new york": "NY", "north carolina": "NC", "north dakota": "ND",
+    "northern mariana islands": "MP", "ohio": "OH", "oklahoma": "OK",
+    "oregon": "OR", "pennsylvania": "PA", "puerto rico": "PR",
+    "rhode island": "RI", "south carolina": "SC", "south dakota": "SD",
+    "tennessee": "TN", "texas": "TX", "trust territories": "TT",
+    "utah": "UT", "vermont": "VT", "virginia": "VA",
+    "virgin islands": "VI", "washington": "WA", "west virginia": "WV",
+    "wisconsin": "WI", "wyoming": "WY"
+}
+
+def normalize_state(v: str) -> str:
+    """Normalize state names or codes to 2-letter uppercase codes."""
+    raw = _safe(v).strip()
+    if not raw:
+        return ""
+    
+    # If already a 2-letter code that exists in values of STATE_MAP
+    if len(raw) == 2 and raw.upper() in STATE_MAP.values():
+        return raw.upper()
+    
+    # If it's a full name match
+    if raw.lower() in STATE_MAP:
+        return STATE_MAP[raw.lower()]
+    
+    # If it's something like "OH-30" or "Ohio - 30", extract the prefix
+    # Try splitting by space or dash
+    prefix = re.split(r'[\s\-]', raw)[0].strip()
+    if prefix.lower() in STATE_MAP:
+        return STATE_MAP[prefix.lower()]
+    if len(prefix) == 2 and prefix.upper() in STATE_MAP.values():
+        return prefix.upper()
+        
+    return raw.upper()
+
+
+# ---------------------------------------------------------------------------
+# Rule 18 – Phone Number Normalization ((xxx) xxx-xxxx)
+# ---------------------------------------------------------------------------
+
+def normalize_phone(v: str) -> str:
+    """Normalize phone numbers to (xxx) xxx-xxxx format."""
+    raw = _safe(v)
+    if not raw:
+        return ""
+    
+    # Extract only digits
+    digits = re.sub(r"\D", "", raw)
+    
+    # Handle US country code if present (11 digits starting with 1)
+    if len(digits) == 11 and digits.startswith("1"):
+        digits = digits[1:]
+        
+    # Standard US 10-digit format
+    if len(digits) == 10:
+        return f"({digits[:3]}) {digits[3:6]}-{digits[6:]}"
+    
+    # If it doesn't match 10 digits, just return the digits for consistency
+    # or return as-is if no digits were found
+    return digits if digits else raw.strip()
 
 
 def normalize_account(v: str) -> str:
@@ -336,6 +437,26 @@ ADDRESS_FIELDS     = {
     "primary_city/municipality",
     "primary_state/province"
 }
+# ---------------------------------------------------------------------------
+# Rule 21 – Employment Status Normalization
+# ---------------------------------------------------------------------------
+
+def normalize_status(v: str) -> str:
+    """Standardize employee status. Maps 'Inactive' and 'Terminated' as same."""
+    raw = _safe(v).lower()
+    if not raw:
+        return ""
+    
+    # User request: Inactive and Terminated are the same
+    if any(k in raw for k in ["term", "inactive", "quit", "sep"]):
+        return "Terminated"
+    
+    if any(k in raw for k in ["act", "active", "online", "employed"]):
+        return "Active"
+        
+    return _safe(v).title()
+
+
 STATUS_FIELDS      = {"employment/position status", "status", "employment status", "employee_status"}
 TOBACCO_FIELDS     = {"tobacco user", "tobacco"}
 HIRE_DATE_FIELDS   = {"hire date", "hire_date", "date of hire", "hire_dt", "hire_date_(mm/dd/yyyy)"}
@@ -571,6 +692,7 @@ DIRECT_DEPOSIT_FIELDS = [
 DEDUCTION_FIELDS = [
     "SSN",
     "Full Name",
+    "Code_ID",
     "Deduction Code",
     "Deduction Description",
     "Deduction Amount",
@@ -618,8 +740,8 @@ WORK_AUTH_FIELDS      = {"us work authorization status", "work authorization", "
 I9_DATE_FIELDS        = {"i-9 eligibility review date", "i9 review date", "i-9 date", "i-9 eligibility review"}
 
 # Direct Deposit aliases
-DD_ACCOUNT_FIELDS     = {"direct deposit account number", "account number", "account #", "bank account number", "bank account #", "account", "net_acct_code", "dist_1_acct_code", "dist_2_acct_code", "dist_3_acct_code", "dist_4_acct_code", "dist_1_account", "dist_2_account"}
-DD_ROUTING_FIELDS     = {"direct deposit routing number", "routing number", "routing #", "bank routing number", "bank routing #", "routing", "aba number", "aba #", "net_rout_code", "dist_1_rout_code", "dist_2_rout_code", "dist_3_rout_code", "dist_4_rout_code", "dist_1_routing", "dist_2_routing"}
+DD_ACCOUNT_FIELDS     = {"direct deposit account number", "account number", "account #", "bank account number", "bank account #", "account", "net_acct_code", "dist_1_acct_code", "dist_2_acct_code", "dist_3_acct_code", "dist_4_acct_code", "dist_1_account", "dist_2_account", "bank deposit account number", "accountIdentifier"}
+DD_ROUTING_FIELDS     = {"direct deposit routing number", "routing number", "routing #", "bank routing number", "bank routing #", "routing", "aba number", "aba #", "net_rout_code", "dist_1_rout_code", "dist_2_rout_code", "dist_3_rout_code", "dist_4_rout_code", "dist_1_routing", "dist_2_routing", "transit aba number"}
 DD_AMOUNT_FIELDS      = {"direct deposit amount", "amount", "deposit amount", "net pay amount"}
 DD_AMT_TYPE_FIELDS    = {"direct deposit amount type", "amount type", "deposit type"}
 DD_FREQ_FIELDS        = {"direct deposit frequency", "frequency", "deposit frequency"}
@@ -629,6 +751,7 @@ DED_CODE_FIELDS       = {"deduction code", "ded code", "deduction cd", "ded cd",
 DED_DESC_FIELDS       = {"deduction description", "ded description", "deduction name", "ded name", "deduction type description", "deduction type", "deduction desc", "deduction plan", "plan name", "deduction long name"}
 DED_AMT_FIELDS        = {"deduction amount", "ded amount", "amount", "deduction $"}
 DED_PCT_FIELDS        = {"deduction %", "deduction percent", "deduction rate", "ded rate", "rate", "percent"}
+CODE_ID_FIELDS        = {"code_id", "code id", "common code", "id", "deduction id"}
 
 # Backwards compatibility
 REQUIRED_FIELDS = PERSONAL_FIELDS
@@ -656,14 +779,20 @@ def normalize_boolean(v: str) -> str:
 # ---------------------------------------------------------------------------
 
 def normalize_numeric(v: str) -> str:
-    """Strip currency symbols and commas; return clean numeric string or empty."""
+    """Strip currency symbols and commas; return clean numeric string or empty. Standardizes 0 to empty."""
     raw = _safe(v)
     if not raw:
         return ""
     cleaned = raw.replace("$", "").replace(",", "").strip()
     try:
-        float(cleaned)
-        return cleaned
+        f = float(cleaned)
+        # Standardize: 0, 0.0, 0.00 all become empty string to match ADP blanks
+        if f == 0:
+            return ""
+        # Unify float strings (e.g. "10.00" -> "10", "10.50" -> "10.5")
+        if f == int(f):
+            return str(int(f))
+        return str(f)
     except ValueError:
         return raw   # preserve non-numeric text as-is (e.g., state codes)
 
@@ -768,6 +897,12 @@ def normalize_dataframe(df: pd.DataFrame, target_fields: list = None) -> pd.Data
             col = col_lower[key]
             df[col] = df[col].apply(lambda v: normalize_marital(_safe(v)))
 
+    # ── Rule 21: Employment Status ──────────────────────────────────────────
+    for key in STATUS_FIELDS:
+        if key in col_lower:
+            col = col_lower[key]
+            df[col] = df[col].apply(normalize_status)
+
     # ── Additional Fields ─────────────────────────────────────────────────────
     job_field_sets = [
         DEPT_CODE_FIELDS, DEPT_DESC_FIELDS, COST_CODE_FIELDS,
@@ -798,7 +933,7 @@ def normalize_dataframe(df: pd.DataFrame, target_fields: list = None) -> pd.Data
     for key in RATE_FIELDS:
         if key in col_lower:
             col = col_lower[key]
-            df[col] = df[col].apply(_safe)
+            df[col] = df[col].apply(lambda v: normalize_numeric(_safe(v)))
 
     # Deduction Fields
     for key in DED_CODE_FIELDS | DED_DESC_FIELDS:
@@ -841,17 +976,29 @@ def normalize_dataframe(df: pd.DataFrame, target_fields: list = None) -> pd.Data
                 col = col_lower[key]
                 df[col] = df[col].apply(lambda v: normalize_numeric(_safe(v)))
 
-    # ── Rule 11: Tax Code / Text Fields (simple strip) ───────────────────────
+    # ── Rule 11: Tax Code / Text Fields (special handling for States) ───────
     tax_text_sets = [
-        FED_MARITAL_FIELDS, LIVED_LOCAL_FIELDS, WORKED_LOCAL_FIELDS,
+        LIVED_LOCAL_FIELDS, WORKED_LOCAL_FIELDS,
         LOCAL4_TAX_FIELDS, LIVED_STATE_FIELDS, WORKED_STATE_FIELDS,
-        SUI_SDI_FIELDS, STATE_MARITAL_FIELDS,
+        SUI_SDI_FIELDS,
     ]
+    state_field_sets = [LIVED_STATE_FIELDS, WORKED_STATE_FIELDS, SUI_SDI_FIELDS]
+    
     for field_set in tax_text_sets:
         for key in field_set:
             if key in col_lower:
                 col = col_lower[key]
-                df[col] = df[col].apply(_safe)
+                if field_set in state_field_sets:
+                    df[col] = df[col].apply(normalize_state)
+                else:
+                    df[col] = df[col].apply(_safe)
+
+    # ── Special Case: Tax Marital / Filing Status ───────────────────────────
+    for field_set in [FED_MARITAL_FIELDS, STATE_MARITAL_FIELDS]:
+        for key in field_set:
+            if key in col_lower:
+                col = col_lower[key]
+                df[col] = df[col].apply(lambda v: normalize_marital(_safe(v)))
 
     # ── Rule 12: Ethnicity / Race ──────────────────────────────────────────
     ethnicity_cols = [ETHNICITY_FIELDS, RACE_FIELDS]
@@ -880,6 +1027,12 @@ def normalize_dataframe(df: pd.DataFrame, target_fields: list = None) -> pd.Data
         if key in col_lower:
             col = col_lower[key]
             df[col] = df[col].apply(lambda v: normalize_date(_safe(v)))
+
+    # ── Rule 18: Phone Numbers ──────────────────────────────────────────────
+    for key in PHONE_FIELDS:
+        if key in col_lower:
+            col = col_lower[key]
+            df[col] = df[col].apply(lambda v: normalize_phone(_safe(v)))
 
     # ── Rule 16 & 17: Deduction Formatting ───────────────────────────────────
     for key in DED_CODE_FIELDS:
