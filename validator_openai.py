@@ -1,7 +1,7 @@
 """
 HR Data Validation Engine  –  OpenAI-Powered Edition
 =====================================================
-Compares two Excel files (Legacy/Paycor vs ADP) using SSN as the unique key.
+Compares two Excel files (Legacy/Paycor/Paycom/Paylocity vs ADP) using SSN as the unique key.
 OpenAI GPT-4o is used for:
   • Intelligent column mapping  (auto-detects column names in any format)
   • Discrepancy summary         (plain-English explanation of mismatches)
@@ -197,6 +197,16 @@ def fmt_val(v):
     if " 00:00:00" in s:
         s = s.replace(" 00:00:00", "")
     
+    # User request: Normalize placeholders and zeros to Blank
+    placeholders = {
+        "0", "0.0", "0.00", "00:00:00", 
+        "unspecified", "not specified", 
+        "i do not wish to self-identify", 
+        "unknown", "none", "nan", "nat"
+    }
+    if s.lower() in placeholders:
+        return ""
+    
     return s
 
 
@@ -337,7 +347,7 @@ def ai_map_columns(df: pd.DataFrame, source_label: str, required_fields: list) -
     """
     cols = [c for c in df.columns if c not in ["Tax SSN", "SSN"]]
     prompt = f"""
-You are an HR data expert. I have an Excel file from {source_label} with these column headers:
+You are an HR data expert. I have an Excel file from a payroll system ({source_label}) with these column headers:
 {json.dumps(cols, indent=2)}
 
 Map each column to the best matching canonical field from this list:
@@ -449,16 +459,16 @@ def compare_values(v1, v2, field: str = ""):
     if b1 and b2:
         return "MATCH"
     if b1 != b2:
-        # Special case: for Rate fields, consider 0 and blank as same
-        if field.lower().startswith("rate"):
-            v1_clean = str(v1).strip() if not b1 else ""
-            v2_clean = str(v2).strip() if not b2 else ""
-            if (v1_clean in ["0", "0.0", "0.00", ""] and v2_clean in ["0", "0.0", "0.00", ""]):
-                return "MATCH"
+        # User request: treat 0, placeholders and blank as same for ALL fields
+        v1_clean = str(v1).strip().lower() if not b1 else ""
+        v2_clean = str(v2).strip().lower() if not b2 else ""
+        zero_like = ["0", "0.0", "0.00", "00:00:00", "unspecified", "not specified", "i do not wish to self-identify", ""]
+        if v1_clean in zero_like and v2_clean in zero_like:
+            return "MATCH"
         return "BLANK"
         
-    s1, s2 = str(v1).strip(), str(v2).strip()
-    if s1.lower() == s2.lower():
+    s1, s2 = str(v1).strip().lower(), str(v2).strip().lower()
+    if s1 == s2:
         return "MATCH"
     
     # Fuzzy state logic (handles OH vs OH-30 vs Ohio)
@@ -617,6 +627,7 @@ def build_datasets(legacy: pd.DataFrame, adp: pd.DataFrame, primary_key: str = "
 
 def build_validation_sheet(ws, ml, ma, company, required_fields, flat_header=False):
     n = len(required_fields)
+    is_deduction = "Deduction Code" in required_fields
     sp1 = n + 1                    # spacer col
     adp_s = n + 2
     sp2   = n + 1 + n + 1
@@ -718,11 +729,20 @@ def build_validation_sheet(ws, ml, ma, company, required_fields, flat_header=Fal
                     f'IF((AND(ISBLANK({l_ref}),ISBLANK({a_ref}))),"BLANK",'
                     f'IF((NOT((ISBLANK({l_ref})=ISBLANK({a_ref})))),"ERROR","MISMATCH")))'
                 )
-            else:
+            elif is_deduction and field in ["Deduction Code", "Deduction Description"]:
+                # If matched by Code_ID, code and description differences don't matter (treat as MATCH if both present)
                 formula = (
-                    f'=IF((AND(ISBLANK({l_ref}),ISBLANK({a_ref}))),"BLANK",'
-                    f'(IF((NOT((ISBLANK({l_ref})=ISBLANK({a_ref})))),"ERROR",'
-                    f'IF({l_ref}={a_ref},"MATCH","MISMATCH"))))'
+                    f'=IF(AND(NOT(ISBLANK({l_ref})),NOT(ISBLANK({a_ref}))),"MATCH",'
+                    f'IF(AND(ISBLANK({l_ref}),ISBLANK({a_ref})),"BLANK","ERROR"))'
+                )
+            else:
+                # Updated formula to treat 0 and BLANK as equivalent for all fields
+                # We use IF checks to treat empty strings and 0 as the same
+                formula = (
+                    f'=IF(OR({l_ref}={a_ref}, '
+                    f'AND(OR(ISBLANK({l_ref}),{l_ref}=0,{l_ref}="0"),OR(ISBLANK({a_ref}),{a_ref}=0,{a_ref}="0"))), "MATCH", '
+                    f'IF(AND(ISBLANK({l_ref}),ISBLANK({a_ref})),"BLANK",'
+                    f'IF(NOT(ISBLANK({l_ref})=ISBLANK({a_ref})),"ERROR","MISMATCH")))'
                 )
             c = ws.cell(row=r, column=cmp_s + i, value=formula)
             c.border = thin_border()
@@ -752,7 +772,7 @@ def build_not_in_report_sheet(ws, ml, ma, company, required_fields):
     is_tax        = "Do not Calculate F.U.T.A. Taxable?" in required_fields or "Federal/W4 Exemptions" in required_fields
     is_dd         = "Account Number" in required_fields
     is_deduction  = "Deduction Code" in required_fields
-    id_col        = "Account Number" if is_dd else "SSN"
+    id_col        = "MatchName" if is_deduction else ("Account Number" if is_dd else "SSN")
 
     if is_personal:
         headers = ["EE Name", id_col, "Legal Middle Name", "Personal Email", 
@@ -830,6 +850,11 @@ def build_discrepancies_sheet(ws, ml, ma, company, ai_summary: str, required_fie
 
     current_row = 4
     disc_fields = [f for f in required_fields if f not in ["SSN", "Tax ID (SSN)", "Direct Deposit Account Number", "Account Number"]]
+    
+    # User request: for deductions, code and description differences don't matter if matched by Code_ID
+    # We keep "Deduction Code" in disc_fields so that MISSING deductions can be reported there.
+    if is_deduction:
+        disc_fields = [f for f in disc_fields if f not in ["Deduction Description", "MatchName", "Code_ID"]]
 
     # Build records grouped by field
     records_by_field: dict[str, list] = {f: [] for f in disc_fields}
@@ -850,6 +875,10 @@ def build_discrepancies_sheet(ws, ml, ma, company, ai_summary: str, required_fie
 
             res = compare_values(vl, va, field=field)
             if res != "MATCH":
+                # User request: for deductions, code and description differences don't matter if matched by Code_ID
+                if is_deduction and field in ["Deduction Code", "Deduction Description"]:
+                    continue
+
                 if is_dd:
                     records_by_field[field].append({
                         "SSN": fmt_val(leg.get("EE SSN", pk_val)), 
@@ -873,8 +902,8 @@ def build_discrepancies_sheet(ws, ml, ma, company, ai_summary: str, required_fie
                         "Deduction Amount": fmt_val(leg.get("Deduction Amount", "")),
                         "Deduction Rate": fmt_val(leg.get("Deduction Rate", "")),
                         "Error in the field": field,
-                        "Legacy": vl,
-                        "ADP": va,
+                        "Legacy": vl if vl else f"MISSING IN {company.upper() if company else 'LEGACY'}",
+                        "ADP": va if va else "MISSING IN ADP",
                         "Result": res,
                     })
                 else:
@@ -916,7 +945,7 @@ def build_discrepancies_sheet(ws, ml, ma, company, ai_summary: str, required_fie
                     "Status": fmt_val(row.get("Employment/Position Status", row.get("Status", "Active"))),
                     "Error in the field": field_to_use,
                     "Error in the Field": field_to_use,
-                    "Legacy": "PRESENT IN LEGACY",
+                    "Legacy": fmt_val(row.get("Deduction Code", "PRESENT IN LEGACY")),
                     "ADP": "MISSING IN ADP",
                     "Result": "MISMATCH"
                 }
@@ -961,7 +990,7 @@ def build_discrepancies_sheet(ws, ml, ma, company, ai_summary: str, required_fie
                     "Error in the field": field_to_use,
                     "Error in the Field": field_to_use,
                     "Legacy": "MISSING IN LEGACY",
-                    "ADP": "PRESENT IN ADP",
+                    "ADP": fmt_val(row.get("Deduction Code", "PRESENT IN ADP")),
                     "Result": "MISMATCH"
                 }
 
@@ -1024,9 +1053,14 @@ def build_missing_ee_sheet(ws, legacy, adp, only_leg, only_adp, ai_summary: str,
     if is_dd:
         labels = ["EE SSN", "Routing Number", "Account Number", "EE Name", "Status", "Hire Date", "Term Date"]
     else:
-        # If id_col is list (composite), use the first one (SSN) as the header
+        # If id_col is list (composite), use the first one (MatchName/SSN) as the header
         id_hdr = id_col[0] if isinstance(id_col, list) else id_col
-        labels = [id_hdr, "Name", "Status", "Hire Date", "Term Date"]
+        
+        # Deduction check: if we are using MatchName (pk[0]), we should also include SSN
+        if id_hdr == "MatchName":
+            labels = [id_hdr, "SSN", "Name", "Status", "Hire Date", "Term Date"]
+        else:
+            labels = [id_hdr, "Name", "Status", "Hire Date", "Term Date"]
     
     n = len(labels)
     sp = n + 2  # Spacer is 2 columns after the start (col 2), so n + 2
@@ -1063,7 +1097,10 @@ def build_missing_ee_sheet(ws, legacy, adp, only_leg, only_adp, ai_summary: str,
             vals = [display_ssn, display_routing, display_account, _get_ee_name(row), status, h_date, t_date]
         else:
             display_id = row.get(id_col[0] if isinstance(id_col, list) else id_col, "")
-            vals = [display_id, _get_ee_name(row), status, h_date, t_date]
+            if "MatchName" in str(id_col):
+                vals = [display_id, row.get("SSN", ""), _get_ee_name(row), status, h_date, t_date]
+            else:
+                vals = [display_id, _get_ee_name(row), status, h_date, t_date]
             
         for i, v in enumerate(vals):
             _data_cell(ws, r + 5, 2 + i, fmt_val(v), bg=YELLOW_LIGHT if r%2 else "FFFACD")
@@ -1093,7 +1130,10 @@ def build_missing_ee_sheet(ws, legacy, adp, only_leg, only_adp, ai_summary: str,
             vals = [display_ssn, display_routing, display_account, _get_ee_name(row), status, h_date, t_date]
         else:
             display_id = row.get(id_col[0] if isinstance(id_col, list) else id_col, "")
-            vals = [display_id, _get_ee_name(row), status, h_date, t_date]
+            if "MatchName" in str(id_col):
+                vals = [display_id, row.get("SSN", ""), _get_ee_name(row), status, h_date, t_date]
+            else:
+                vals = [display_id, _get_ee_name(row), status, h_date, t_date]
             
         for i, v in enumerate(vals):
             _data_cell(ws, r + 5, r_s + i, fmt_val(v), bg=GREEN_LIGHT if r%2 else "C6EFCE")
@@ -1222,7 +1262,7 @@ def run_validation(legacy_path, adp_path, company, output_path, required_fields,
     print(f"Phase 1: AI column mapping (Legacy, Sheet {sheet_idx}) …")
     legacy_raw = load_excel(legacy_path, sheet_idx=sheet_idx, id_col_hint=primary_key)
     norm_fields = list(dict.fromkeys(required_fields + CORE_FIELDS)) # Ensure uniqueness
-    leg_map = ai_map_columns(legacy_raw, "Legacy/Paycor", norm_fields)
+    leg_map = ai_map_columns(legacy_raw, "Legacy/Payroll", norm_fields)
     legacy  = apply_mapping(legacy_raw.copy(), leg_map, norm_fields)
     legacy  = norm.normalize_dataframe(legacy, norm_fields)
 
@@ -1625,16 +1665,16 @@ def run_deduction_validation(legacy_path, adp_path, company, output_path):
     wb = Workbook()
     ws1 = wb.active
     ws1.title = "Validated Data"
-    v_fields = ["SSN", "Full Name", "Code_ID", "Deduction Code", "Deduction Description", "Deduction Amount", "Deduction Rate"]
+    v_fields = ["MatchName", "SSN", "Full Name", "Code_ID", "Deduction Code", "Deduction Description", "Deduction Amount", "Deduction Rate"]
     build_validation_sheet(ws1, ml, ma, company, v_fields, flat_header=False)
     
     # Discrepancies
     ws2 = wb.create_sheet("Discrepancies")
     disc_sample = []
-    # 1. Check for field mismatches in matched records
+    # 1. Check for field mismatches in matched records (Only Amount and Rate matter)
     for i in range(len(ml)):
         l_row, a_row = ml.iloc[i], ma.iloc[i]
-        for f in ["Deduction Description", "Deduction Amount", "Deduction Rate"]:
+        for f in ["Deduction Amount", "Deduction Rate"]:
             vl, va = fmt_val(l_row.get(f, "")), fmt_val(a_row.get(f, ""))
             if compare_values(vl, va) != "MATCH":
                 disc_sample.append({
@@ -1741,7 +1781,7 @@ def main():
         description="HR Data Validation Engine – OpenAI-powered"
     )
     parser.add_argument("--legacy",  required=True,
-                        help="Path to Legacy/Paycor Excel file")
+                        help="Path to Legacy (Paycor, Paycom, Paylocity, etc.) Excel file")
     parser.add_argument("--adp",     required=True,
                         help="Path to ADP Excel file")
     parser.add_argument("--company", default="Company",

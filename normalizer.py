@@ -421,11 +421,11 @@ LEGAL_LAST_FIELDS  = {"legal last name", "legal last", "last name", "last_name",
 
 SSN_FIELDS         = {"ssn", "tax id", "social security number", "tax ssn", "ss_number", "tax ssn#", "ss#", "tax(ssn)", "tax id (ssn)", "ee ssn", "employee ssn", "emp ssn", "ss_number"}
 GENDER_FIELDS      = {"gender", "sex", "gender (self-id)", "gender for insurance coverage"}
-BIRTH_DATE_FIELDS  = {"birth date", "date of birth", "dob", "birthdate", "birth_date", "birth_date_(mm/dd/yyyy)"}
+BIRTH_DATE_FIELDS  = {"birth date", "date of birth", "dob", "birthdate", "birth_date", "birth_date_(mm/dd/yyyy)", "birthdate"}
 MARITAL_FIELDS     = {"state filing status", "marital status", "w4 marital status", "federal marital status", "filing status"}
 EMAIL_FIELDS       = {"personal email", "work email", "email address", "personal_email", "work_email"}
 PHONE_FIELDS       = {"cell/mobile phone", "home phone", "work phone", "phone number", "primary_phone/secondary_phone?"}
-ZIP_FIELDS         = {"legal / preferred address: zip / postal code", "zip", "zip code", "postal code", "zip/postal", "zip_code", "postal_code", "primary_zip/postal_code"}
+ZIP_FIELDS         = {"legal / preferred address: zip / postal code", "zip", "zip code", "postal code", "zip/postal", "zip_code", "postal_code", "primary_zip/postal_code", "zipcode", "postal"}
 ADDRESS_FIELDS     = {
     "legal / preferred address: address line 1",
     "legal / preferred address: address line 2",
@@ -435,7 +435,8 @@ ADDRESS_FIELDS     = {
     "primary_address_line_1",
     "primary_address_line_2",
     "primary_city/municipality",
-    "primary_state/province"
+    "primary_state/province",
+    "address 1", "address 2", "city", "state"
 }
 # ---------------------------------------------------------------------------
 # Rule 21 – Employment Status Normalization
@@ -457,7 +458,7 @@ def normalize_status(v: str) -> str:
     return _safe(v).title()
 
 
-STATUS_FIELDS      = {"employment/position status", "status", "employment status", "employee_status"}
+STATUS_FIELDS      = {"employment/position status", "status", "employment status", "employee_status", "employee status"}
 TOBACCO_FIELDS     = {"tobacco user", "tobacco"}
 HIRE_DATE_FIELDS   = {"hire date", "hire_date", "date of hire", "hire_dt", "hire_date_(mm/dd/yyyy)"}
 TERM_DATE_FIELDS   = {"termination date", "term date", "term_date", "date of termination", "term_dt", "termination_dt", "status_effective_date"}
@@ -690,6 +691,7 @@ DIRECT_DEPOSIT_FIELDS = [
 ]
 
 DEDUCTION_FIELDS = [
+    "MatchName",
     "SSN",
     "Full Name",
     "Code_ID",
@@ -1064,6 +1066,41 @@ def normalize_dataframe(df: pd.DataFrame, target_fields: list = None) -> pd.Data
         "Rehire Date": list(REHIRE_DATE_FIELDS),
         "Employment/Position Status": list(STATUS_FIELDS),
         "Worker Category (FT, PT, TEMP, etc.)": list(WORKER_CAT_FIELDS),
+        # Personal Information Aliases
+        "Legal First Name": list(LEGAL_FIRST_FIELDS),
+        "Legal Middle Name": list(LEGAL_MID_FIELDS),
+        "Legal Last Name": list(LEGAL_LAST_FIELDS),
+        "Birth Date": list(BIRTH_DATE_FIELDS),
+        "Gender": list(GENDER_FIELDS),
+        "Marital Status": list(MARITAL_FIELDS),
+        "Personal Email": list(EMAIL_FIELDS),
+        "Work Email": list(EMAIL_FIELDS),
+        "Cell/Mobile Phone": list(PHONE_FIELDS),
+        "Home Phone": list(PHONE_FIELDS),
+        "Work Phone": list(PHONE_FIELDS),
+        "Legal / Preferred Address: Address Line 1": list(ADDRESS_FIELDS),
+        "Legal / Preferred Address: Address Line 2": list(ADDRESS_FIELDS),
+        "Legal / Preferred Address: City": list(ADDRESS_FIELDS),
+        "Legal / Preferred Address: State / Territory Code": list(ADDRESS_FIELDS),
+        "Legal / Preferred Address: Zip / Postal Code": list(ZIP_FIELDS),
+        "Tobacco User": list(TOBACCO_FIELDS),
+        # Job Information Aliases
+        "Job Title": list(JOB_TITLE_FIELDS),
+        "Home Department Code": list(DEPT_CODE_FIELDS),
+        "Home Department Description": list(DEPT_DESC_FIELDS),
+        "Home Cost Number Code": list(COST_CODE_FIELDS),
+        "Home Cost Number Description": list(COST_DESC_FIELDS),
+        "Business Unit Code": list(BU_CODE_FIELDS),
+        "Business Unit Description": list(BU_DESC_FIELDS),
+        "Location Code": list(LOC_CODE_FIELDS),
+        "Location Description": list(LOC_DESC_FIELDS),
+        "NAICS Workers' Comp Code": list(NAICS_FIELDS),
+        "Benefit Eligibility Class": list(BENEFIT_ELIG_FIELDS),
+        "Regular Pay Rate Amount": list(PAY_RATE_FIELDS),
+        "Annual Salary": list(ANNUAL_SALARY_FIELDS),
+        "Standard Hours": list(STANDARD_HOURS_FIELDS),
+        "FLSA (Exempt/Non Exempt)": list(FLSA_FIELDS),
+        "Rate 2": ["rate 2"], "Rate 3": ["rate 3"], "Rate 4": ["rate 4"], "Rate 5": ["rate 5"],
         # Tax Information aliases
         "Do not Calculate F.U.T.A. Taxable?": list(FUTA_FIELDS),
         "Do Not Calculate Federal Income Tax?": list(FED_INC_TAX_FIELDS),
@@ -1102,7 +1139,6 @@ def normalize_dataframe(df: pd.DataFrame, target_fields: list = None) -> pd.Data
         "EE SSN": ["ssn"] + list(SSN_FIELDS - {"ssn"}),
         "EE Name": list(FULL_NAME_FIELDS),
         # Deduction Information aliases
-        "SSN": list(SSN_FIELDS),
         "Full Name": list(FULL_NAME_FIELDS),
         "Deduction Code": list(DED_CODE_FIELDS),
         "Deduction Amount": list(DED_AMT_FIELDS),
