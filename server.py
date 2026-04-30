@@ -51,6 +51,10 @@ async def validate_files(
     leg_path = os.path.join(UPLOAD_DIR, f"{req_id}_legacy_{legacyFile.filename}")
     adp_path = os.path.join(UPLOAD_DIR, f"{req_id}_adp_{adpFile.filename}")
 
+    # Extract base names without extension and convert to uppercase for headers
+    source1_name = os.path.splitext(legacyFile.filename)[0].upper() if legacyFile.filename else "LEGACY"
+    source2_name = os.path.splitext(adpFile.filename)[0].upper() if adpFile.filename else "ADP"
+
     with open(leg_path, "wb") as f:
         f.write(await legacyFile.read())
     with open(adp_path, "wb") as f:
@@ -82,7 +86,9 @@ async def validate_files(
                 legacy_path=leg_path,
                 adp_path=adp_path,
                 company="G&W Products",
-                output_path=output_path
+                output_path=output_path,
+                source1_name=source1_name,
+                source2_name=source2_name
             )
         else:
             res = vo.run_validation(
@@ -92,7 +98,9 @@ async def validate_files(
                 output_path=output_path,
                 required_fields=required_fields,
                 primary_key=primary_key,
-                sheet_idx=sheet_idx
+                sheet_idx=sheet_idx,
+                source1_name=source1_name,
+                source2_name=source2_name
             )
         print(f"[SUCCESS] Validation complete. Output: {output_path}")
     except Exception as e:

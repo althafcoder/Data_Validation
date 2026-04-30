@@ -625,7 +625,7 @@ def build_datasets(legacy: pd.DataFrame, adp: pd.DataFrame, primary_key: str = "
 # Step 6 – Sheet builders
 # ---------------------------------------------------------------------------
 
-def build_validation_sheet(ws, ml, ma, company, required_fields, flat_header=False):
+def build_validation_sheet(ws, ml, ma, company, required_fields, flat_header=False, source1_name="LEGACY", source2_name="ADP"):
     n = len(required_fields)
     is_deduction = "Deduction Code" in required_fields
     sp1 = n + 1                    # spacer col
@@ -659,13 +659,13 @@ def build_validation_sheet(ws, ml, ma, company, required_fields, flat_header=Fal
             bg_l, fg_l, bg_a, fg_a = GREEN_DARK, WHITE, NAVY, WHITE
 
         ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=n)
-        c = ws.cell(row=1, column=1, value=f"{section_label} INFO – LEGACY")
+        c = ws.cell(row=1, column=1, value=f"{section_label} INFO – {source1_name.upper()}")
         c.fill = hex_fill(bg_l); c.font = cell_font(bold=True, color=fg_l, size=11)
         c.alignment = Alignment(horizontal="center", vertical="center")
         ws.cell(row=1, column=sp1).fill = hex_fill("D9D9D9")
 
         ws.merge_cells(start_row=1, start_column=adp_s, end_row=1, end_column=adp_s + n - 1)
-        c = ws.cell(row=1, column=adp_s, value=f"{section_label} INFO – ADP")
+        c = ws.cell(row=1, column=adp_s, value=f"{section_label} INFO – {source2_name.upper()}")
         c.fill = hex_fill(bg_a); c.font = cell_font(bold=True, color=fg_a, size=11)
         c.alignment = Alignment(horizontal="center", vertical="center")
         ws.cell(row=1, column=sp2).fill = hex_fill("D9D9D9")
@@ -772,7 +772,7 @@ def build_not_in_report_sheet(ws, ml, ma, company, required_fields):
     is_tax        = "Do not Calculate F.U.T.A. Taxable?" in required_fields or "Federal/W4 Exemptions" in required_fields
     is_dd         = "Account Number" in required_fields
     is_deduction  = "Deduction Code" in required_fields
-    id_col        = "MatchName" if is_deduction else ("Account Number" if is_dd else "SSN")
+    id_col        = "SSN" if is_deduction else ("Account Number" if is_dd else "SSN")
 
     if is_personal:
         headers = ["EE Name", id_col, "Legal Middle Name", "Personal Email", 
@@ -808,6 +808,8 @@ def build_not_in_report_sheet(ws, ml, ma, company, required_fields):
         pk_val = headers[1] # Usually SSN or Account Number
         # If pk_val is a list (composite key), we just use the first element (SSN) for the display
         display_id = ssn[0] if isinstance(ssn, (list, tuple)) else ssn
+        if is_deduction:
+            display_id = fmt_val(leg.get("SSN", ""))
         vals = [name, display_id]
         for h in headers[2:]:
             val = fmt_val(leg.get(h, ""))
@@ -818,7 +820,7 @@ def build_not_in_report_sheet(ws, ml, ma, company, required_fields):
     _set_col_widths(ws, [3, 25, 16, 18, 25, 25, 25, 25, 25, 40, 15])
 
 
-def build_discrepancies_sheet(ws, ml, ma, company, ai_summary: str, required_fields, id_col: str = "SSN", only_leg=None, only_adp=None, legacy_full=None, adp_full=None):
+def build_discrepancies_sheet(ws, ml, ma, company, ai_summary: str, required_fields, id_col: str = "SSN", only_leg=None, only_adp=None, legacy_full=None, adp_full=None, source1_name="LEGACY", source2_name="ADP"):
     # G&W headers: Client Name, SSN, EE Name, Status, Error in the Field, Legacy, ADP
     is_dd = "Account Number" in required_fields
     is_deduction = "Deduction Code" in required_fields
@@ -828,11 +830,11 @@ def build_discrepancies_sheet(ws, ml, ma, company, ai_summary: str, required_fie
                    "Error in the Field", "Legacy", "ADP"]
         max_col = 7
     elif is_deduction:
-        id_hdr = id_col[0] if isinstance(id_col, list) else id_col
-        headers = [id_hdr, "EE Name", "SSN", "Status", 
+        id_hdr = "SSN"
+        headers = [id_hdr, "EE Name", "Status", 
                    "Code_ID", "Deduction Code", "Deduction Amount", "Deduction Rate",
                    "Error in the field", "Legacy", "ADP"]
-        max_col = 12
+        max_col = 10
     else:
         # If id_col is a list (composite), use the first element (SSN) as the header
         id_hdr = id_col[0] if isinstance(id_col, list) else id_col
@@ -890,12 +892,11 @@ def build_discrepancies_sheet(ws, ml, ma, company, ai_summary: str, required_fie
                         "Result": res,
                     })
                 elif is_deduction:
-                    id_hdr = id_col[0] if isinstance(id_col, list) else id_col
-                    pk_display = pk_val[0] if isinstance(pk_val, (list, tuple)) else pk_val
+                    id_hdr = "SSN"
+                    pk_display = fmt_val(leg.get("SSN", ""))
                     records_by_field[field].append({
                         id_hdr: pk_display,
                         "EE Name": name,
-                        "SSN": fmt_val(leg.get("SSN", "")),
                         "Status": status,
                         "Code_ID": fmt_val(leg.get("Code_ID", "")),
                         "Deduction Code": fmt_val(leg.get("Deduction Code", "")),
@@ -903,7 +904,7 @@ def build_discrepancies_sheet(ws, ml, ma, company, ai_summary: str, required_fie
                         "Deduction Rate": fmt_val(leg.get("Deduction Rate", "")),
                         "Error in the field": field,
                         "Legacy": vl if vl else f"MISSING IN {company.upper() if company else 'LEGACY'}",
-                        "ADP": va if va else "MISSING IN ADP",
+                        "ADP": va if va else f"MISSING IN {source2_name.upper()}",
                         "Result": res,
                     })
                 else:
@@ -922,7 +923,7 @@ def build_discrepancies_sheet(ws, ml, ma, company, ai_summary: str, required_fie
 
     # Add unmatched records if provided (e.g., missing Deduction Codes)
     if only_leg and legacy_full is not None:
-        id_hdr = id_col[0] if isinstance(id_col, list) else id_col
+        id_hdr = "SSN" if is_deduction else (id_col[0] if isinstance(id_col, list) else id_col)
         field_to_use = "Deduction Code" if "Deduction Code" in disc_fields else (disc_fields[0] if disc_fields else "Record")
         if field_to_use not in records_by_field: records_by_field[field_to_use] = []
         
@@ -939,14 +940,14 @@ def build_discrepancies_sheet(ws, ml, ma, company, ai_summary: str, required_fie
                 rate = fmt_val(row.get("Deduction Rate", ""))
                 
                 rec = {
-                    id_hdr: pk_display,
+                    id_hdr: fmt_val(row.get("SSN", "")) if is_deduction else pk_display,
                     "SSN": fmt_val(row.get("SSN", "")),
                     "EE Name": _get_ee_name(row),
                     "Status": fmt_val(row.get("Employment/Position Status", row.get("Status", "Active"))),
                     "Error in the field": field_to_use,
                     "Error in the Field": field_to_use,
                     "Legacy": fmt_val(row.get("Deduction Code", "PRESENT IN LEGACY")),
-                    "ADP": "MISSING IN ADP",
+                    "ADP": f"MISSING IN {source2_name.upper()}",
                     "Result": "MISMATCH"
                 }
                 
@@ -966,7 +967,7 @@ def build_discrepancies_sheet(ws, ml, ma, company, ai_summary: str, required_fie
             except: continue
 
     if only_adp and adp_full is not None:
-        id_hdr = id_col[0] if isinstance(id_col, list) else id_col
+        id_hdr = "SSN" if is_deduction else (id_col[0] if isinstance(id_col, list) else id_col)
         field_to_use = "Deduction Code" if "Deduction Code" in disc_fields else (disc_fields[0] if disc_fields else "Record")
         if field_to_use not in records_by_field: records_by_field[field_to_use] = []
 
@@ -983,13 +984,13 @@ def build_discrepancies_sheet(ws, ml, ma, company, ai_summary: str, required_fie
                 rate = fmt_val(row.get("Deduction Rate", ""))
 
                 rec = {
-                    id_hdr: pk_display,
+                    id_hdr: fmt_val(row.get("SSN", "")) if is_deduction else pk_display,
                     "SSN": fmt_val(row.get("SSN", "")),
                     "EE Name": _get_ee_name(row),
                     "Status": fmt_val(row.get("Employment/Position Status", row.get("Status", "Active"))),
                     "Error in the field": field_to_use,
                     "Error in the Field": field_to_use,
-                    "Legacy": "MISSING IN LEGACY",
+                    "Legacy": f"MISSING IN {source1_name.upper()}",
                     "ADP": fmt_val(row.get("Deduction Code", "PRESENT IN ADP")),
                     "Result": "MISMATCH"
                 }
@@ -1027,7 +1028,8 @@ def build_discrepancies_sheet(ws, ml, ma, company, ai_summary: str, required_fie
         if rows:
             # Table Headers for this section
             for col, hdr in enumerate(headers, start=2):
-                _header_cell(ws, current_row, col, hdr, bg=DISC_HEADER)
+                display_hdr = source1_name.title() if hdr == "Legacy" else (source2_name.title() if hdr == "ADP" else hdr)
+                _header_cell(ws, current_row, col, display_hdr, bg=DISC_HEADER)
             current_row += 1
 
             # Data Rows
@@ -1046,7 +1048,7 @@ def build_discrepancies_sheet(ws, ml, ma, company, ai_summary: str, required_fie
         _set_col_widths(ws, [3, 18, 16, 22, 12, 30, 30, 30])
 
 
-def build_missing_ee_sheet(ws, legacy, adp, only_leg, only_adp, ai_summary: str, id_col: str = "SSN"):
+def build_missing_ee_sheet(ws, legacy, adp, only_leg, only_adp, ai_summary: str, id_col: str = "SSN", source1_name="LEGACY", source2_name="ADP"):
     # Detect if this is a Direct Deposit report
     is_dd = "Account" in str(id_col) or "Routing" in str(id_col)
     
@@ -1058,7 +1060,7 @@ def build_missing_ee_sheet(ws, legacy, adp, only_leg, only_adp, ai_summary: str,
         
         # Deduction check: if we are using MatchName (pk[0]), we should also include SSN
         if id_hdr == "MatchName":
-            labels = [id_hdr, "SSN", "Name", "Status", "Hire Date", "Term Date"]
+            labels = ["SSN", "Name", "Status", "Hire Date", "Term Date"]
         else:
             labels = [id_hdr, "Name", "Status", "Hire Date", "Term Date"]
     
@@ -1073,7 +1075,7 @@ def build_missing_ee_sheet(ws, legacy, adp, only_leg, only_adp, ai_summary: str,
 
     # Left: ADP not in Legacy
     ws.merge_cells(start_row=3, start_column=2, end_row=3, end_column=n + 1)
-    c = ws.cell(row=3, column=2, value="Employee available in ADP but not in LEGACY")
+    c = ws.cell(row=3, column=2, value=f"Employee available in {source2_name.upper()} but not in {source1_name.upper()}")
     c.fill = hex_fill(NAVY); c.font = cell_font(bold=True, color=WHITE)
     for i, lbl in enumerate(labels):
         _header_cell(ws, 4, 2 + i, lbl, bg=NAVY)
@@ -1098,7 +1100,7 @@ def build_missing_ee_sheet(ws, legacy, adp, only_leg, only_adp, ai_summary: str,
         else:
             display_id = row.get(id_col[0] if isinstance(id_col, list) else id_col, "")
             if "MatchName" in str(id_col):
-                vals = [display_id, row.get("SSN", ""), _get_ee_name(row), status, h_date, t_date]
+                vals = [row.get("SSN", ""), _get_ee_name(row), status, h_date, t_date]
             else:
                 vals = [display_id, _get_ee_name(row), status, h_date, t_date]
             
@@ -1107,7 +1109,7 @@ def build_missing_ee_sheet(ws, legacy, adp, only_leg, only_adp, ai_summary: str,
 
     # Right: Legacy not in ADP
     ws.merge_cells(start_row=3, start_column=r_s, end_row=3, end_column=r_s + n - 1)
-    c = ws.cell(row=3, column=r_s, value="Employee available in LEGACY but not in ADP")
+    c = ws.cell(row=3, column=r_s, value=f"Employee available in {source1_name.upper()} but not in {source2_name.upper()}")
     c.fill = hex_fill(GREEN_DARK); c.font = cell_font(bold=True, color=WHITE)
     for i, lbl in enumerate(labels):
         _header_cell(ws, 4, r_s + i, lbl, bg=GREEN_DARK)
@@ -1131,7 +1133,7 @@ def build_missing_ee_sheet(ws, legacy, adp, only_leg, only_adp, ai_summary: str,
         else:
             display_id = row.get(id_col[0] if isinstance(id_col, list) else id_col, "")
             if "MatchName" in str(id_col):
-                vals = [display_id, row.get("SSN", ""), _get_ee_name(row), status, h_date, t_date]
+                vals = [row.get("SSN", ""), _get_ee_name(row), status, h_date, t_date]
             else:
                 vals = [display_id, _get_ee_name(row), status, h_date, t_date]
             
@@ -1153,7 +1155,7 @@ def _get_ee_name(df_row):
     return fn or ln or fmt_val(df_row.get("SSN", df_row.get("Tax ID (SSN)", "")))
 
 
-def build_code_mapping_sheet(ws, legacy_df: pd.DataFrame, adp_df: pd.DataFrame):
+def build_code_mapping_sheet(ws, legacy_df: pd.DataFrame, adp_df: pd.DataFrame, source1_name="LEGACY", source2_name="ADP"):
     """
     Build a 'Code Mapping' sheet that lists unique Deduction Code → Description pairs
     sourced from both Legacy and ADP dataframes in a side-by-side layout.
@@ -1170,7 +1172,7 @@ def build_code_mapping_sheet(ws, legacy_df: pd.DataFrame, adp_df: pd.DataFrame):
     
     # ADP Header
     ws.merge_cells(start_row=2, start_column=2, end_row=2, end_column=3)
-    c_adp = ws.cell(row=2, column=2, value="ADP")
+    c_adp = ws.cell(row=2, column=2, value=source2_name.upper())
     c_adp.fill = hex_fill(BLUE_LIGHT)
     c_adp.font = cell_font(bold=True, size=11)
     c_adp.alignment = Alignment(horizontal="center", vertical="center")
@@ -1179,7 +1181,7 @@ def build_code_mapping_sheet(ws, legacy_df: pd.DataFrame, adp_df: pd.DataFrame):
 
     # Legacy Header
     ws.merge_cells(start_row=2, start_column=5, end_row=2, end_column=6)
-    c_leg = ws.cell(row=2, column=5, value="Legacy")
+    c_leg = ws.cell(row=2, column=5, value=source1_name.upper())
     c_leg.fill = hex_fill(PEACH)
     c_leg.font = cell_font(bold=True, size=11)
     c_leg.alignment = Alignment(horizontal="center", vertical="center")
@@ -1255,7 +1257,7 @@ def build_code_mapping_sheet(ws, legacy_df: pd.DataFrame, adp_df: pd.DataFrame):
 # Main orchestrator
 # ---------------------------------------------------------------------------
 
-def run_validation(legacy_path, adp_path, company, output_path, required_fields, primary_key: str = "SSN", sheet_idx: int = 0):
+def run_validation(legacy_path, adp_path, company, output_path, required_fields, primary_key: str = "SSN", sheet_idx: int = 0, source1_name="LEGACY", source2_name="ADP"):
 
     print(f"\n[Validation] Processing: {output_path}")
 
@@ -1378,24 +1380,24 @@ def run_validation(legacy_path, adp_path, company, output_path, required_fields,
     
     if is_deduction:
         ws1.title = "Deduction Validation"
-        build_validation_sheet(ws1, ml, ma, company, required_fields, flat_header=False)
+        build_validation_sheet(ws1, ml, ma, company, required_fields, flat_header=False, source1_name=source1_name, source2_name=source2_name)
     else:
         ws1.title = "Validation Sheet" if is_dd else "Validated Data"
-        build_validation_sheet(ws1, ml, ma, company, required_fields)
+        build_validation_sheet(ws1, ml, ma, company, required_fields, source1_name=source1_name, source2_name=source2_name)
 
     ws2 = wb.create_sheet("Discrepancies")
     id_col_label = "Account Number" if primary_key == "Account Number" else "SSN"
-    build_discrepancies_sheet(ws2, ml, ma, company, disc_ai, required_fields, id_col=id_col_label)
+    build_discrepancies_sheet(ws2, ml, ma, company, disc_ai, required_fields, id_col=id_col_label, source1_name=source1_name, source2_name=source2_name)
 
     ws3 = wb.create_sheet("Missing EE")
-    build_missing_ee_sheet(ws3, legacy, adp, only_leg, only_adp, miss_ai, id_col=id_col_label)
+    build_missing_ee_sheet(ws3, legacy, adp, only_leg, only_adp, miss_ai, id_col=id_col_label, source1_name=source1_name, source2_name=source2_name)
 
     if not is_dd and not is_deduction:
         # Sheet 4 name varies by field group
         if "Gender" in required_fields:
-            sheet4_name = "Not in Legacy , not in adp"
+            sheet4_name = f"Not in {source1_name.title()} , not in {source2_name.title()}"
         else:
-            sheet4_name = "Not in Legacy Not in adp"
+            sheet4_name = f"Not in {source1_name.title()} Not in {source2_name.title()}"
         ws4 = wb.create_sheet(sheet4_name)
         build_not_in_report_sheet(ws4, ml, ma, company, required_fields)
 
@@ -1530,7 +1532,7 @@ def load_deduction_mapping_strict(path: str) -> pd.DataFrame:
     except:
         return pd.DataFrame()
 
-def run_deduction_validation(legacy_path, adp_path, company, output_path):
+def run_deduction_validation(legacy_path, adp_path, company, output_path, source1_name="LEGACY", source2_name="ADP"):
     print(f"\n[Deduction] Processing: {output_path}")
     
     # 1. Load Mapping Sheets from BOTH files
@@ -1543,8 +1545,8 @@ def run_deduction_validation(legacy_path, adp_path, company, output_path):
         if m_df.empty: return {}, {}, {}
         m_cols = m_df.columns
         id_col = next((c for c in m_cols if "code_id" in c.lower() or "common code" in c.lower()), None)
-        code_col = next((c for c in m_cols if "deduction code" in c.lower()), None)
-        desc_col = next((c for c in m_cols if "description" in c.lower()), None)
+        code_col = next((c for c in m_cols if "deduction code" in c.lower() or c.lower().strip() == "code"), None)
+        desc_col = next((c for c in m_cols if "description" in c.lower() or "desc" in c.lower()), None)
         
         if not id_col: return {}, {}, {}
         
@@ -1665,8 +1667,8 @@ def run_deduction_validation(legacy_path, adp_path, company, output_path):
     wb = Workbook()
     ws1 = wb.active
     ws1.title = "Validated Data"
-    v_fields = ["MatchName", "SSN", "Full Name", "Code_ID", "Deduction Code", "Deduction Description", "Deduction Amount", "Deduction Rate"]
-    build_validation_sheet(ws1, ml, ma, company, v_fields, flat_header=False)
+    v_fields = ["SSN", "Full Name", "Code_ID", "Deduction Code", "Deduction Description", "Deduction Amount", "Deduction Rate"]
+    build_validation_sheet(ws1, ml, ma, company, v_fields, flat_header=False, source1_name=source1_name, source2_name=source2_name)
     
     # Discrepancies
     ws2 = wb.create_sheet("Discrepancies")
@@ -1705,7 +1707,7 @@ def run_deduction_validation(legacy_path, adp_path, company, output_path):
                 "Employee": row["Full Name"],
                 "Field": "Deduction Code",
                 "Legacy": desc,
-                "ADP": "MISSING IN ADP",
+                "ADP": f"MISSING IN {source2_name.upper()}",
                 "SSN": row.get("SSN", ""),
                 "Status": row.get("Employment/Position Status", row.get("Status", "Active"))
             })
@@ -1727,7 +1729,7 @@ def run_deduction_validation(legacy_path, adp_path, company, output_path):
             disc_sample.append({
                 "Employee": row["Full Name"],
                 "Field": "Deduction Code",
-                "Legacy": "MISSING IN LEGACY",
+                "Legacy": f"MISSING IN {source1_name.upper()}",
                 "ADP": desc,
                 "SSN": row.get("SSN", ""),
                 "Status": row.get("Employment/Position Status", row.get("Status", "Active"))
@@ -1736,7 +1738,7 @@ def run_deduction_validation(legacy_path, adp_path, company, output_path):
     disc_ai = ai_discrepancy_summary(disc_sample)
     build_discrepancies_sheet(ws2, ml, ma, company, disc_ai, v_fields, id_col=pk, 
                               only_leg=only_leg, only_adp=only_adp, 
-                              legacy_full=legacy_ded, adp_full=adp_ded)
+                              legacy_full=legacy_ded, adp_full=adp_ded, source1_name=source1_name, source2_name=source2_name)
     
     # Missing Employee
     ws3 = wb.create_sheet("Missing Employee")
@@ -1748,10 +1750,10 @@ def run_deduction_validation(legacy_path, adp_path, company, output_path):
     l_names = [leg_idx_for_names.loc[[s]].iloc[0]["Full Name"] for s in list(only_leg)[:15]]
     a_names = [adp_idx_for_names.loc[[s]].iloc[0]["Full Name"] for s in list(only_adp)[:15]]
     miss_ai = ai_missing_ee_summary(l_names, a_names)
-    build_missing_ee_sheet(ws3, legacy_ded, adp_ded, only_leg, only_adp, miss_ai, id_col=pk)
+    build_missing_ee_sheet(ws3, legacy_ded, adp_ded, only_leg, only_adp, miss_ai, id_col=pk, source1_name=source1_name, source2_name=source2_name)
     
     # Not in ADP
-    ws4 = wb.create_sheet("Not in ADP")
+    ws4 = wb.create_sheet(f"Not in {source2_name.title()}")
     build_not_in_report_sheet(ws4, ml, ma, company, v_fields)
     
     # Code Mapping (Combined)
